@@ -107,4 +107,3 @@ export async function verifyProfessorOrRedirect(h: Headers) {
 }
 export async function verifyStaffOrRedirect(h: Headers) {
   return verifyRoleOrRedirect(h, ['STAFF', 'ADMIN']);
-}
