@@ -1,264 +1,320 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 
-type ResultItem = {
+type Row = {
   pub_id: number;
-  title?: string | null;        // ถ้าไม่มี title ใน DB จะ fallback เป็น venue_name
-  venue_name?: string | null;
-  level?: string | null;        // JOURNAL / CONF / BOOK (สมมติจาก schema)
-  year?: number | null;
-  has_pdf?: boolean | null;
-  link_url?: string | null;
-  authors: string[];            // รวมชื่อผู้เขียนจาก person
-  categories: string[];         // รวม category_name
+  year: number | null;
+  type: string | null;         // จาก venue.type (JOURNAL/CONFERENCE/BOOK/OTHER)
+  level: string | null;        // NATIONAL/INTERNATIONAL
+  has_pdf: boolean;
+  status: string | null;
+  link_url: string | null;
+  venue_name: string | null;
+  updated_at: string | null;
+  authors: string[];
+  categories: string[];
 };
 
-type FetchResponse = {
-  data: ResultItem[];
+type SearchResponse = {
+  data: Row[];
   total: number;
+  page: number;
+  pageSize: number;
+  message?: string;
 };
 
-const PAGE_SIZE = 10;
+const TYPE_OPTIONS = [
+  { label: 'ทั้งหมด', value: 'ALL' },
+  { label: 'JOURNAL', value: 'JOURNAL' },
+  { label: 'CONFERENCE', value: 'CONFERENCE' },
+  { label: 'BOOK', value: 'BOOK' },
+  { label: 'OTHER', value: 'OTHER' },
+] as const;
 
-export default function LandingPage() {
-  const router = useRouter();
-  const sp = useSearchParams();
+const PDF_OPTIONS = [
+  { label: 'ทั้งหมด', value: 'ALL' },
+  { label: 'มี', value: '1' },
+  { label: 'ไม่มี', value: '0' },
+] as const;
 
-  // ค่ากรองจาก URL (รองรับแชร์ลิงก์)
-  const [q, setQ] = useState(sp.get('q') || '');
-  const [author, setAuthor] = useState(sp.get('author') || '');
-  const [category, setCategory] = useState(sp.get('category') || ''); // ชื่อหมวด
-  const [typeFilter, setTypeFilter] = useState(sp.get('type') || ''); // JOURNAL/CONF/BOOK
-  const [yearFrom, setYearFrom] = useState(sp.get('y1') || '');
-  const [yearTo, setYearTo] = useState(sp.get('y2') || '');
-  const [hasPdf, setHasPdf] = useState(sp.get('pdf') === '1');
+export default function SearchPage() {
+  // ---------- filters ----------
+  const [q, setQ] = useState('');
+  const [author, setAuthor] = useState('');
+  const [category, setCategory] = useState('');
+  const [type, setType] = useState<(typeof TYPE_OPTIONS)[number]['value']>('ALL');
+  const [yearFrom, setYearFrom] = useState<string>('');
+  const [yearTo, setYearTo] = useState<string>('');
+  const [hasPdf, setHasPdf] = useState<(typeof PDF_OPTIONS)[number]['value']>('ALL');
 
+  // ---------- data ----------
+  const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<ResultItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // pagination
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(Number(sp.get('p') || 1));
 
-  // โหลด categories มาใส่ dropdown (ถ้าอยากเป็น list – ตอนนี้ดึงแบบขี้เกียจจาก API เดียวกันได้ แต่แยก endpoint จะดีสุด)
-  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // เรียกค้นหา
-  async function search() {
+  async function runSearch(goPage = 1) {
     setLoading(true);
+    setError(null);
+
     try {
       const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      if (author) params.set('author', author);
-      if (category) params.set('category', category);
-      if (typeFilter) params.set('type', typeFilter);
-      if (yearFrom) params.set('yearFrom', yearFrom);
-      if (yearTo) params.set('yearTo', yearTo);
-      if (hasPdf) params.set('hasPdf', '1');
-      params.set('page', String(page));
-      params.set('pageSize', String(PAGE_SIZE));
+      if (q.trim()) params.set('q', q.trim());
+      if (author.trim()) params.set('author', author.trim());
+      if (category.trim()) params.set('category', category.trim());
+      // type → ถ้าไม่ใช่ ALL จึงส่ง
+      if (type && type !== 'ALL') params.set('type', type);
+      if (yearFrom.trim()) params.set('year_from', yearFrom.trim());
+      if (yearTo.trim()) params.set('year_to', yearTo.trim());
+      if (hasPdf !== 'ALL') params.set('has_pdf', hasPdf); // '1' หรือ '0'
+      params.set('page', String(goPage));
+      params.set('pageSize', String(pageSize));
 
-      // sync URL
-      router.replace('/?' + params.toString());
+      const res = await fetch(`/api/publications/search?${params.toString()}`, { cache: 'no-store' });
+      const json = (await res.json()) as SearchResponse;
 
-      const res = await fetch('/api/publications/search?' + params.toString(), { cache: 'no-store' });
-      const json: FetchResponse & { categories?: string[] } = await res.json();
-      if (!res.ok) throw new Error((json as any).message || 'search failed');
-      setItems(json.data || []);
+      if (!res.ok) {
+        throw new Error(json?.message || `Search failed (${res.status})`);
+      }
+
+      setRows(json.data || []);
       setTotal(json.total || 0);
-      if (json.categories) setCategoryOptions(json.categories);
+      setPage(json.page || goPage);
     } catch (e: any) {
-      console.error('search error:', e?.message || e);
-      setItems([]);
+      setError(e?.message || 'โหลดข้อมูลล้มเหลว');
+      setRows([]);
       setTotal(0);
     } finally {
       setLoading(false);
     }
   }
 
+  // โหลดรอบแรก
   useEffect(() => {
-    search();
+    runSearch(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, []);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setPage(1);
-    search();
+  // ----- UI helpers -----
+  function displayTitle(r: Row) {
+    return r.venue_name || r.link_url || `Publication #${r.pub_id}`;
   }
 
-  const showingFrom = (page - 1) * PAGE_SIZE + 1;
-  const showingTo = Math.min(page * PAGE_SIZE, total);
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  function clearAll() {
+    setQ('');
+    setAuthor('');
+    setCategory('');
+    setType('ALL');
+    setYearFrom('');
+    setYearTo('');
+    setHasPdf('ALL');
+    setPage(1);
+    // โหลดใหม่
+    setTimeout(() => runSearch(1), 0);
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Top bar */}
-      <div className="flex items-center justify-end px-6 py-3 text-sm text-gray-600">
-        <a href="/login" className="hover:underline">เข้าสู่ระบบ</a>
+      {/* Top header */}
+      <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 flex items-center justify-between">
+        <h1 className="text-sm text-gray-500">ค้นหาผลงานตีพิมพ์</h1>
+        <Link href="/login" className="text-sm text-gray-600 hover:text-gray-900">เข้าสู่ระบบ</Link>
       </div>
 
-      <main className="px-6 pb-10 max-w-6xl mx-auto">
-        <h1 className="text-lg font-semibold mb-4">ค้นหาผลงานตีพิมพ์</h1>
-
-        {/* แถบค้นหาเร็ว */}
-        <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow p-4 mb-4">
-          <div className="flex gap-3">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="พิมพ์คำค้นหา: ชื่อเรื่อง, คำสำคัญ, ผู้แต่ง..."
-              className="flex-1 border rounded-xl px-4 py-2"
-            />
-            <button
-              type="submit"
-              className="px-6 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-            >
-              ค้นหา
-            </button>
+      {/* Search panel */}
+      <div className="max-w-6xl mx-auto px-4 md:px-6">
+        <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 md:p-5">
+          {/* Quick search */}
+          <div className="flex flex-col md:flex-row gap-3 md:gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500">ค้นหาแบบเร็ว</label>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="เช่น ชื่อผลงาน, ลิงก์, ชื่อวารสาร, ผู้เขียน…"
+                onKeyDown={(e) => e.key === 'Enter' && runSearch(1)}
+                className="w-full rounded-xl border px-3 py-2 focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="text-[11px] text-gray-400 mt-1">ปล. บางกรณีไม่มีต้องลองคำอื่นเพิ่มเติม</div>
+            </div>
+            <div className="flex-none md:self-end">
+              <button
+                onClick={() => runSearch(1)}
+                className="w-full md:w-auto px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+              >
+                ค้นหา
+              </button>
+            </div>
           </div>
-          <div className="text-xs text-gray-500 mt-2">ป.ล. บุคคลทั่วไปไม่ต้องเข้าสู่ระบบก็ค้นหาได้</div>
-        </form>
 
-        {/* ตัวกรองเพิ่มเติม */}
-        <div className="bg-white rounded-xl shadow p-4 mb-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-12 md:col-span-3">
-              <div className="text-xs text-gray-500 mb-1">ผู้เขียน</div>
+          {/* Advanced filters */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="md:col-span-3">
+              <label className="text-xs text-gray-500">ผู้เขียน</label>
               <input
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
-                placeholder="กรองชื่อผู้เขียน..."
-                className="w-full border rounded-xl px-3 py-2"
+                onKeyDown={(e) => e.key === 'Enter' && runSearch(1)}
+                placeholder="กรอกชื่อผู้เขียน…"
+                className="w-full rounded-xl border px-3 py-2 focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div className="col-span-12 md:col-span-3">
-              <div className="text-xs text-gray-500 mb-1">หมวดหมู่</div>
-              <select
+
+            <div className="md:col-span-3">
+              <label className="text-xs text-gray-500">หมวดหมู่</label>
+              <input
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full border rounded-xl px-3 py-2"
+                onKeyDown={(e) => e.key === 'Enter' && runSearch(1)}
+                placeholder="AI / Data Science / …"
+                className="w-full rounded-xl border px-3 py-2 focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="md:col-span-3">
+              <label className="text-xs text-gray-500">ประเภท (จาก Venue)</label>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value as any)}
+                className="w-full rounded-xl border px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">-- ทั้งหมด --</option>
-                {categoryOptions.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
             </div>
-            <div className="col-span-12 md:col-span-3">
-              <div className="text-xs text-gray-500 mb-1">ประเภท</div>
-              <select
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-                className="w-full border rounded-xl px-3 py-2"
-              >
-                <option value="">-- ทั้งหมด --</option>
-                <option value="JOURNAL">JOURNAL</option>
-                <option value="CONF">CONF</option>
-                <option value="BOOK">BOOK</option>
-              </select>
-            </div>
-            <div className="col-span-6 md:col-span-1">
-              <div className="text-xs text-gray-500 mb-1">ช่วงปี</div>
+
+            <div className="md:col-span-1">
+              <label className="text-xs text-gray-500">ช่วงปี (จาก)</label>
               <input
-                type="number"
-                placeholder="จาก"
+                inputMode="numeric"
+                placeholder="2019"
                 value={yearFrom}
                 onChange={(e) => setYearFrom(e.target.value)}
-                className="w-full border rounded-xl px-3 py-2"
+                className="w-full rounded-xl border px-3 py-2 focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div className="col-span-6 md:col-span-1">
-              <div className="text-xs text-gray-500 mb-1">&nbsp;</div>
+            <div className="md:col-span-1">
+              <label className="text-xs text-gray-500">ถึง</label>
               <input
-                type="number"
-                placeholder="ถึง"
+                inputMode="numeric"
+                placeholder="2025"
                 value={yearTo}
                 onChange={(e) => setYearTo(e.target.value)}
-                className="w-full border rounded-xl px-3 py-2"
+                className="w-full rounded-xl border px-3 py-2 focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div className="col-span-12 md:col-span-1">
-              <div className="text-xs text-gray-500 mb-1">ไฟล์ PDF</div>
-              <button
-                type="button"
-                onClick={() => setHasPdf((v) => !v)}
-                className={`w-full px-3 py-2 rounded-xl border ${hasPdf ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-gray-700'}`}
+
+            <div className="md:col-span-1">
+              <label className="text-xs text-gray-500">ไฟล์ PDF</label>
+              <select
+                value={hasPdf}
+                onChange={(e) => setHasPdf(e.target.value as any)}
+                className="w-full rounded-xl border px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500"
               >
-                {hasPdf ? 'มี' : 'ทั้งหมด'}
-              </button>
+                {PDF_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
-            <div className="col-span-12 md:col-span-1 flex md:justify-end">
-              <button onClick={() => { setAuthor(''); setCategory(''); setTypeFilter(''); setYearFrom(''); setYearTo(''); setHasPdf(false); setPage(1); search(); }} className="px-3 py-2 rounded-xl bg-gray-100">
-                ล้าง
-              </button>
-            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => runSearch(1)}
+              className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+            >
+              ค้นหาตามตัวกรอง
+            </button>
+            <button
+              onClick={clearAll}
+              className="px-4 py-2 rounded-xl border hover:bg-gray-50"
+            >
+              ล้างตัวกรอง
+            </button>
+            {error && <div className="text-sm text-rose-600 ml-auto">{error}</div>}
           </div>
         </div>
 
-        {/* ผลการค้นหา */}
-        <div className="bg-white rounded-xl shadow p-2">
-          {loading ? (
-            <div className="p-6 text-center text-gray-500">กำลังโหลด...</div>
-          ) : items.length === 0 ? (
-            <div className="p-6 text-center text-gray-500">ไม่พบผลลัพธ์</div>
-          ) : (
-            <div className="divide-y">
-              {items.map((it) => (
-                <div key={it.pub_id} className="p-4 flex items-center justify-between gap-4">
-                  <div>
-                    <div className="font-medium">
-                      {it.title || it.venue_name || '(ไม่มีชื่อเรื่อง)'}
+        {/* Results */}
+        <div className="mt-5 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100">
+          <div className="px-4 md:px-5 py-3 border-b">
+            <div className="text-sm text-gray-600">
+              แสดง {rows.length > 0 ? (page - 1) * pageSize + 1 : 0} – {Math.min(page * pageSize, total)} จาก {total} รายการ
+            </div>
+          </div>
+
+          <div className="divide-y">
+            {loading ? (
+              <div className="p-6 text-gray-500">กำลังโหลด…</div>
+            ) : rows.length === 0 ? (
+              <div className="p-6 text-gray-500">ไม่พบบันทึก</div>
+            ) : (
+              rows.map((r) => (
+                <div key={r.pub_id} className="p-4 md:p-5">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-slate-900">{displayTitle(r)}</div>
+                      <div className="mt-1 text-[13px] text-gray-600">
+                        {r.authors.join(', ') || '—'} — {r.year ?? '—'} • {r.type || '—'} • {r.level || '—'}
+                      </div>
+                      {r.categories.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {r.categories.map((c, i) => (
+                            <span key={i} className="text-[11px] px-2 py-1 rounded-full border bg-gray-50">
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-sm text-gray-600">
-                      {it.authors.join(', ') || '—'} — {it.year ?? '—'} • {it.level ?? '—'}
-                      {it.categories.length ? (
-                        <>
-                          {' '} • {it.categories.join(' • ')}
-                        </>
-                      ) : null}
-                      {it.has_pdf ? ' • PDF' : ''}
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    {it.link_url ? (
-                      <a
-                        href={it.link_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
-                      >
-                        ดูรายละเอียด
-                      </a>
-                    ) : (
-                      <a
-                        href={`/publication/${it.pub_id}`}
-                        className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
-                      >
-                        ดูรายละเอียด
-                      </a>
-                    )}
+
+                    {/* ใช้ Link ของ Next.js → ไปหน้า /publications/[id] แน่นอน */}
+                    <Link
+                      href={`/publications/${r.pub_id}`}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      ดูรายละเอียด
+                    </Link>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
 
-          {/* footer + pagination */}
-          <div className="flex items-center justify-between px-3 py-3 text-sm text-gray-600">
-            <div>แสดง {total ? `${showingFrom}-${showingTo}` : 0} จาก {total} รายการ</div>
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-1 rounded-lg border" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>ก่อนหน้า</button>
-              <div className="px-2">หน้า {page}/{totalPages}</div>
-              <button className="px-3 py-1 rounded-lg border" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>หน้าถัดไป</button>
+          {/* Pagination */}
+          <div className="px-4 md:px-5 py-3 border-t flex items-center justify-between text-sm text-gray-600">
+            <div>หน้า {page} / {totalPages}</div>
+            <div className="flex gap-2">
+              <button
+                disabled={page <= 1}
+                onClick={() => runSearch(page - 1)}
+                className="px-3 py-1.5 rounded-lg border hover:bg-gray-50 disabled:opacity-40"
+              >
+                ก่อนหน้า
+              </button>
+              <button
+                disabled={page >= totalPages}
+                onClick={() => runSearch(page + 1)}
+                className="px-3 py-1.5 rounded-lg border hover:bg-gray-50 disabled:opacity-40"
+              >
+                ถัดไป
+              </button>
             </div>
           </div>
         </div>
 
-        <div className="text-right mt-2 text-xs text-gray-500">
-          หน้าถัดไป ►
-        </div>
-      </main>
+        <div className="text-right text-xs text-gray-400 mt-3">© COMSCI PSU — Public Search</div>
+      </div>
     </div>
   );
 }
