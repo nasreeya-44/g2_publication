@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-// enums ใน DB (publication.status น่าจะเป็นตัวพิมพ์เล็ก)
+// enums ใน DB/UI
 const LEVELS = ['NATIONAL', 'INTERNATIONAL'] as const;
 const TYPES  = ['JOURNAL', 'CONFERENCE', 'BOOK'] as const;
 
@@ -21,7 +21,7 @@ export default function ProfessorCreatePublicationPage() {
   // ฟอร์มหลัก
   const [titleTh, setTitleTh] = useState('');
   const [titleEn, setTitleEn] = useState('');
-  const [type, setType]       = useState<(typeof TYPES)[number]>('JOURNAL'); // ใช้แค่ใน UI
+  const [type, setType]       = useState<(typeof TYPES)[number]>('JOURNAL');
   const [level, setLevel]     = useState<(typeof LEVELS)[number]>('INTERNATIONAL');
   const [year, setYear]       = useState<string>('2025');
   const [venueName, setVenueName] = useState('');
@@ -29,7 +29,7 @@ export default function ProfessorCreatePublicationPage() {
   const [hasPdf, setHasPdf]   = useState(false);
   const [abstractTh, setAbstractTh] = useState('');
   const [abstractEn, setAbstractEn] = useState('');
-  const [categories, setCategories] = useState<string>(''); // รับเป็นคอมม่าคั่น
+  const [categories, setCategories] = useState<string>('');
   const [authors, setAuthors] = useState<Author[]>([
     { full_name: '', role: 'LEAD', email: '', affiliation: '' },
   ]);
@@ -51,17 +51,16 @@ export default function ProfessorCreatePublicationPage() {
     setError(null);
     setSubmitting(true);
     try {
-      // เตรียม payload สำหรับ API
       const payload = {
-        // fields ของ publication
-        level,                               // NATIONAL / INTERNATIONAL
+        // ตาราง publication
+        level,
         year: Number(year) || null,
         has_pdf: hasPdf,
         link_url: linkUrl || null,
         venue_name: venueName || null,
-        status,                              // draft | under_review
-        // ข้อมูลเพิ่มเติม (ไม่จำเป็นต้องมีคอลัมน์ใน publication)
-        // ใช้เก็บประกอบเพื่อสร้าง relation ใน API
+        status, // 'draft' | 'under_review'
+
+        // เสริม (ยังไม่ต้องมีคอลัมน์ก็ได้)
         categories: categories
           .split(',')
           .map((s) => s.trim())
@@ -69,7 +68,6 @@ export default function ProfessorCreatePublicationPage() {
         authors: authors
           .map((a, i) => ({ ...a, author_order: i + 1 }))
           .filter((a) => a.full_name.trim().length > 0),
-        // เก็บไว้เผื่อในอนาคต (ถ้าฐานข้อมูลมีคอลัมน์ title_th/title_en ค่อยเพิ่มใน API)
         _extra_titles: { th: titleTh, en: titleEn },
         _extra_type: type,
         _extra_abstracts: { th: abstractTh, en: abstractEn },
@@ -83,8 +81,8 @@ export default function ProfessorCreatePublicationPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.message || 'ไม่สามารถบันทึกได้');
 
-      // ไปหน้ารายละเอียด private ของ professor
-      router.push(`/professor/publications/${json.pub_id}`);
+      // ✅ แนะนำไปหน้าแก้ไขต่อ เพื่อใส่รายละเอียดเพิ่มเติมได้เลย
+      router.push(`/professor/publications/${json.pub_id}/edit`);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -94,11 +92,7 @@ export default function ProfessorCreatePublicationPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* top bar */}
-      <div className="flex items-center justify-end px-6 py-3 text-sm">
-        {/*<div className="font-semibold">U2. สร้างและแก้ไขผลงานตีพิมพ์อาจารย์</div>*/}
-        <div className="text-gray-600">ผู้ใช้: somchai (PROFESSOR)</div>
-      </div>
+      {/* ❌ ตัด Top bar ในหน้าออก (มีใน layout แล้ว) */}
 
       <main className="px-6 pb-10 max-w-5xl mx-auto">
         <div className="bg-white rounded-2xl shadow p-5">
@@ -152,6 +146,8 @@ export default function ProfessorCreatePublicationPage() {
                 <input
                   value={year}
                   onChange={(e) => setYear(e.target.value)}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="w-full border rounded-xl px-3 py-2"
                   placeholder="2025"
                 />
@@ -222,7 +218,7 @@ export default function ProfessorCreatePublicationPage() {
               />
             </div>
 
-            {/* ตารางผู้เขียน */}
+            {/* ผู้เขียน */}
             <div>
               <div className="text-xs text-gray-500 mb-2">ผู้เขียน / ผู้ร่วมเขียน</div>
               <div className="border rounded-xl overflow-hidden">
@@ -280,7 +276,7 @@ export default function ProfessorCreatePublicationPage() {
               </div>
             </div>
 
-            {/* สถานะ + ปุ่มคำสั่ง */}
+            {/* ปุ่มคำสั่ง */}
             <div className="pt-2 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -303,15 +299,11 @@ export default function ProfessorCreatePublicationPage() {
               </Link>
             </div>
 
-            {error && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
-              {error}
-            </div>}
-            {/*
-            <div className="text-xs text-gray-500 mt-6">
-              * หมายเหตุ: ตอนสร้างจะบันทึกเฉพาะข้อมูลหลักลงตาราง <code>publication</code> (level, year, has_pdf, link_url, venue_name, status) <br />
-              ส่วนชื่อเรื่อง/บทคัดย่อ/ประเภท ถูกส่งไปกับคำขอเพื่อรองรับการขยาย schema ภายหลัง
-            </div>
-            */}
+            {error && (
+              <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
           </section>
         </div>
       </main>
