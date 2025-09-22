@@ -18,7 +18,7 @@ if (!SESSION_SECRET) {
 function getClientIP(req: NextRequest) {
   const xf = req.headers.get('x-forwarded-for');
   if (xf) return xf.split(',')[0].trim();
-  // @ts-ignore next/ip may be undefined in some adapters
+  // @ts-ignore
   return (req as any).ip || req.headers.get('x-real-ip') || null;
 }
 
@@ -31,9 +31,12 @@ async function signSession(payload: Record<string, any>) {
     .sign(key);
 }
 
-async function logLogin(
-  params: { user_id: number | null; success: boolean; ip?: string | null; reason?: string | null }
-) {
+async function logLogin(params: {
+  user_id: number | null;
+  success: boolean;
+  ip?: string | null;
+  reason?: string | null;
+}) {
   try {
     await supabase.from('login_log').insert({
       user_id: params.user_id ?? null,
@@ -46,6 +49,19 @@ async function logLogin(
   }
 }
 
+function redirectForRole(role: string) {
+  switch (String(role).toUpperCase()) {
+    case 'ADMIN':
+      return '/admin/dashboard';
+    case 'STAFF':
+      return '/staff/dashboard';
+    case 'PROFESSOR':
+      return '/professor/dashboard';
+    default:
+      return '/';
+  }
+}
+
 /* ----------------- handler ----------------- */
 export async function POST(req: NextRequest) {
   try {
@@ -55,37 +71,42 @@ export async function POST(req: NextRequest) {
     };
 
     if (!username || !password) {
-      return NextResponse.json({ ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' },
+        { status: 400 }
+      );
     }
 
-    // หา user ได้ทั้งจาก username และ email (ทำแบบ 2 ช็อตเพื่อเลี่ยง or/eq injection)
     const selectCols =
       'user_id, username, email, password_hash, role, status, first_name, last_name, profile_image';
 
-    let { data: userByUname } = await supabase
+    // หา user จาก username ก่อน ถ้าไม่เจอค่อยลองหาเป็น email
+    let { data: user } = await supabase
       .from('users')
       .select(selectCols)
       .eq('username', username)
       .maybeSingle();
 
-    let user = userByUname;
     if (!user) {
-      const { data: userByEmail } = await supabase
+      const { data: byEmail } = await supabase
         .from('users')
         .select(selectCols)
         .eq('email', username)
         .maybeSingle();
-      user = userByEmail || null;
+      user = byEmail || null;
     }
 
     const ip = getClientIP(req);
 
     if (!user) {
       await logLogin({ user_id: null, success: false, ip, reason: 'User not found' });
-      return NextResponse.json({ ok: false, message: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, message: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' },
+        { status: 401 }
+      );
     }
 
-    if (user.status === 'SUSPENDED') {
+    if (String(user.status).toUpperCase() === 'SUSPENDED') {
       await logLogin({ user_id: user.user_id, success: false, ip, reason: 'Account suspended' });
       return NextResponse.json({ ok: false, message: 'บัญชีถูกระงับการใช้งาน' }, { status: 403 });
     }
@@ -93,7 +114,10 @@ export async function POST(req: NextRequest) {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       await logLogin({ user_id: user.user_id, success: false, ip, reason: 'Invalid password' });
-      return NextResponse.json({ ok: false, message: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, message: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' },
+        { status: 401 }
+      );
     }
 
     // สำเร็จ → สร้าง session token
@@ -105,9 +129,12 @@ export async function POST(req: NextRequest) {
 
     await logLogin({ user_id: user.user_id, success: true, ip, reason: null });
 
+    // เลือกเส้นทางตาม role
+    const redirect = redirectForRole(user.role);
+
     const res = NextResponse.json({
       ok: true,
-      redirect: '/admin/dashboard',
+      redirect,
       user: {
         user_id: user.user_id,
         username: user.username,
@@ -124,7 +151,7 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7 วัน
+      maxAge: 60 * 60 * 24 * 7,
     });
 
     return res;
