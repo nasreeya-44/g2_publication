@@ -1,0 +1,38 @@
+// app/api/staff/profile/route.ts
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE!
+);
+
+function userIdFromCookie(raw?: string) {
+  if (!raw) return 2; // fallback demo
+  try { const j = JSON.parse(raw); return Number(j.user_id) || 2; } catch { return 2; }
+}
+
+export async function PUT(req: Request) {
+  const body = await req.json();
+  const raw = (await cookies()).get("app_session")?.value;
+  const user_id = userIdFromCookie(raw);
+
+  const { error } = await supabase
+    .from("users")
+    .update({
+      first_name: body.first_name ?? null,
+      last_name : body.last_name ?? null,
+      email     : body.email ?? null,
+      phone     : body.phone ?? null,
+      position  : body.position ?? null,
+      department: body.department ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", user_id);
+
+  if (error) {
+    return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
+  }
+  return NextResponse.json({ ok: true });
+}
