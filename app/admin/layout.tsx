@@ -170,17 +170,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </svg>
           </SidebarItem>
 
-          {/* Guide */}
-          <SidebarItem
-            title="คู่มือสำหรับแอดมิน"
-            active={isActive('guide')}
-            onClick={() => router.push('/admin/guide')}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M5 4h10a2 2 0 0 1 2 2v12a.5.5 0 0 1-.8.4L13 15H7a2 2 0 0 1-2-2V4z" stroke="currentColor" strokeWidth="1.6" />
-            </svg>
-          </SidebarItem>
-
           {/* Users */}
           <SidebarItem
             title="จัดการบัญชีผู้ใช้"
@@ -202,6 +191,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <path d="M12 8v5l3 2M4 12a8 8 0 1 0 16 0A8 8 0 0 0 4 12z" stroke="currentColor" strokeWidth="1.6" />
             </svg>
           </SidebarItem>
+
+          {/* Guide */}
+          <SidebarItem
+            title="คู่มือสำหรับแอดมิน"
+            active={isActive('guide')}
+            onClick={() => router.push('/admin/guide')}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 4h10a2 2 0 0 1 2 2v12a.5.5 0 0 1-.8.4L13 15H7a2 2 0 0 1-2-2V4z" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </SidebarItem>
+          
         </div>
       </aside>
 
