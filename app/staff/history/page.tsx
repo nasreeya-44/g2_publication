@@ -4,7 +4,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import StaffSideRail from "@/components/StaffSideRail";
 
-/* ---------------- Icons (no extra libs) ---------------- */
 const Icon = {
   Search: (p: React.SVGProps<SVGSVGElement>) => (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
@@ -28,27 +27,22 @@ const Icon = {
   ),
 };
 
-/* ---------------- Types ---------------- */
 type Row = {
-  id: number;                 // edit_id
-  when: string;               // edited_at (ISO)
+  id: number;
+  when: string;
   pub_id: number;
   pub_name: string | null;
-  user: string;               // ชื่อผู้แก้ไข (อาจเป็น "-" ถ้าไม่ทราบ)
-  field: string;              // field_name
+  user: string;
+  field: string;
   old_value: string | null;
   new_value: string | null;
   status_after?: string | null;
 };
 
-/* ---------------- Small helpers ---------------- */
 function formatDT(s?: string) {
   if (!s) return "-";
   try {
-    return new Date(s).toLocaleString("th-TH", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
   } catch {
     return s;
   }
@@ -86,7 +80,13 @@ function SkeletonRow() {
   );
 }
 
-/* ---------------- Page ---------------- */
+/** แปลงเป็นข้อความย่อ (ใช้เมื่อเป็น abstract ใน summary) */
+function excerpt(s?: string | null, max = 160) {
+  if (!s) return "—";
+  const clean = s.replace(/\s+/g, " ").trim();
+  return clean.length > max ? clean.slice(0, max) + "…" : clean;
+}
+
 export default function HistorySimple() {
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
@@ -101,7 +101,6 @@ export default function HistorySimple() {
       if (q.trim()) p.set("q", q.trim());
       if (from) p.set("from", from);
       if (to) p.set("to", to);
-
       const res = await fetch(`/api/staff/history?${p.toString()}`, { cache: "no-store" });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.message || "load failed");
@@ -113,7 +112,6 @@ export default function HistorySimple() {
 
   useEffect(() => { load(); }, [load]);
 
-  // สถิติสั้น ๆ ด้านบน
   const stat = useMemo(() => {
     const total = rows.length;
     const fields = new Set(rows.map(r => r.field));
@@ -125,15 +123,11 @@ export default function HistorySimple() {
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 relative">
         <StaffSideRail />
         <main className="md:ml-[80px] space-y-5">
-          {/* Header */}
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h1 className="text-[18px] font-semibold text-slate-900">ประวัติการจัดการผลงานตีพิมพ์</h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                ตรวจดูการแก้ไขค่าต่าง ๆ (field) ของผลงานทุกชิ้น พร้อมกรองตามคำค้น/ช่วงเวลา
-              </p>
+              <p className="text-xs text-slate-500 mt-0.5">ตรวจดูการแก้ไขค่าต่าง ๆ (field) ของผลงานทุกชิ้น พร้อมกรองตามคำค้น/ช่วงเวลา</p>
             </div>
-            {/* สถิติย่อ */}
             <div className="flex items-center gap-2">
               <div className="rounded-xl bg-white border shadow-sm px-3 py-2 text-center">
                 <div className="text-[11px] text-slate-500">จำนวนเหตุการณ์</div>
@@ -146,19 +140,12 @@ export default function HistorySimple() {
             </div>
           </div>
 
-          {/* Filters */}
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <form
-              onSubmit={(e) => { e.preventDefault(); load(); }}
-              className="grid grid-cols-1 md:grid-cols-5 gap-3"
-            >
-              {/* search */}
+            <form onSubmit={(e) => { e.preventDefault(); load(); }} className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div className="md:col-span-2">
                 <label className="text-[11px] text-slate-500 mb-1 block">ค้นหา</label>
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400">
-                    <Icon.Search />
-                  </span>
+                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400"><Icon.Search /></span>
                   <input
                     className="w-full rounded-lg border px-9 py-2 text-sm placeholder:text-slate-400 focus:ring-2 focus:ring-blue-200"
                     placeholder="ชื่อเรื่อง / ฟิลด์ / ค่าเดิม-ค่าใหม่ / ผู้แก้ไข"
@@ -168,13 +155,10 @@ export default function HistorySimple() {
                 </div>
               </div>
 
-              {/* from */}
               <div>
                 <label className="text-[11px] text-slate-500 mb-1 block">ตั้งแต่</label>
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400">
-                    <Icon.Calendar />
-                  </span>
+                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400"><Icon.Calendar /></span>
                   <input
                     type="date"
                     className="w-full rounded-lg border px-8 py-2 text-sm focus:ring-2 focus:ring-blue-200"
@@ -184,13 +168,10 @@ export default function HistorySimple() {
                 </div>
               </div>
 
-              {/* to */}
               <div>
                 <label className="text-[11px] text-slate-500 mb-1 block">ถึง</label>
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400">
-                    <Icon.Calendar />
-                  </span>
+                  <span className="absolute inset-y-0 left-2 flex items-center text-slate-400"><Icon.Calendar /></span>
                   <input
                     type="date"
                     className="w-full rounded-lg border px-8 py-2 text-sm focus:ring-2 focus:ring-blue-200"
@@ -201,27 +182,19 @@ export default function HistorySimple() {
               </div>
 
               <div className="md:self-end">
-                <button
-                  type="submit"
-                  className="w-full rounded-lg bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700 transition"
-                >
+                <button type="submit" className="w-full rounded-lg bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700 transition">
                   ค้นหา
                 </button>
               </div>
             </form>
           </div>
 
-          {/* List */}
           <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-            <div className="border-b bg-gray-50 px-4 py-2 text-xs text-gray-500">
-              เหตุการณ์ล่าสุด
-            </div>
+            <div className="border-b bg-gray-50 px-4 py-2 text-xs text-gray-500">เหตุการณ์ล่าสุด</div>
 
             {loading ? (
               <>
-                <SkeletonRow />
-                <SkeletonRow />
-                <SkeletonRow />
+                <SkeletonRow /><SkeletonRow /><SkeletonRow />
               </>
             ) : rows.length === 0 ? (
               <div className="px-6 py-12 text-center">
@@ -232,39 +205,74 @@ export default function HistorySimple() {
                 <div className="text-xs text-gray-400 mt-1">ลองลบตัวกรองหรือกรอกคำค้นอื่น</div>
               </div>
             ) : (
-              rows.map((r) => (
-                <details key={r.id} className="px-4 py-4 border-b last:border-0 group">
-                  <summary className="cursor-pointer list-none">
-                    <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                      <div className="text-xs text-gray-500">
-                        {formatDT(r.when)} • {r.user}
+              rows.map((r) => {
+                const isAbstract = r.field?.toLowerCase() === "abstract";
+                return (
+                  <details key={r.id} className="px-4 py-4 border-b last:border-0 group">
+                    <summary className="cursor-pointer list-none">
+                      <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                        <div className="text-xs text-gray-500">
+                          {formatDT(r.when)} • {r.user}
+                        </div>
+                        {r.status_after ? (
+                          <span className="self-start md:self-auto text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                            {r.status_after}
+                          </span>
+                        ) : null}
                       </div>
-                      {r.status_after ? (
-                        <span className="self-start md:self-auto text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                          {r.status_after}
-                        </span>
-                      ) : null}
-                    </div>
 
-                    <div className="mt-0.5 font-medium text-slate-900">
-                      <a href={`/staff/reviews/${r.pub_id}`} className="underline decoration-dotted underline-offset-2 hover:text-blue-700">
-                        {r.pub_name || `pub#${r.pub_id}`}
-                      </a>
-                    </div>
+                      <div className="mt-0.5 font-medium text-slate-900">
+                        <a href={`/staff/reviews/${r.pub_id}`} className="underline decoration-dotted underline-offset-2 hover:text-blue-700">
+                          {r.pub_name || `pub#${r.pub_id}`}
+                        </a>
+                      </div>
 
-                    <div className="mt-1.5">
-                      <FieldChip name={r.field} />
-                      <Diff oldV={r.old_value} newV={r.new_value} />
-                    </div>
-                  </summary>
+                      {/* แสดงผลต่างกัน ถ้าเป็น abstract */}
+                      {isAbstract ? (
+                        <div className="mt-1.5">
+                          <FieldChip name="abstract" />
+                          <div className="mt-1 text-[13px] text-slate-700">
+                            <span className="text-slate-500 mr-1">มีการแก้ไขเป็น</span>
+                            <span className="inline-block align-top max-w-[46rem] text-slate-800">
+                              {excerpt(r.new_value, 180)}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            คลิกเพื่อดูข้อความเต็ม (ก่อน/หลังแก้)
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1.5">
+                          <FieldChip name={r.field} />
+                          <Diff oldV={r.old_value} newV={r.new_value} />
+                        </div>
+                      )}
+                    </summary>
 
-                  {/* extra info */}
-                  <div className="mt-3 text-xs text-gray-600 grid grid-cols-2 md:grid-cols-4 gap-2">
-                    <div><span className="text-gray-400">pub_id:</span> {r.pub_id}</div>
-                    <div className="col-span-1 md:col-span-3"><span className="text-gray-400">เวลา:</span> {formatDT(r.when)}</div>
-                  </div>
-                </details>
-              ))
+                    {/* extra details */}
+                    {isAbstract ? (
+                      <div className="mt-3 grid md:grid-cols-2 gap-3 text-sm">
+                        <div className="bg-gray-50 rounded-lg p-3 border">
+                          <div className="text-xs text-gray-500 mb-1">ก่อนแก้ไข</div>
+                          <div className="whitespace-pre-wrap">{r.old_value ?? "—"}</div>
+                        </div>
+                        <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
+                          <div className="text-xs text-gray-500 mb-1">ค่าใหม่</div>
+                          <div className="whitespace-pre-wrap">{r.new_value ?? "—"}</div>
+                        </div>
+                        <div className="md:col-span-2 text-xs text-gray-600">
+                          <span className="text-gray-400">pub_id:</span> {r.pub_id} • <span className="text-gray-400">เวลา:</span> {formatDT(r.when)}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-xs text-gray-600 grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <div><span className="text-gray-400">pub_id:</span> {r.pub_id}</div>
+                        <div className="col-span-1 md:col-span-3"><span className="text-gray-400">เวลา:</span> {formatDT(r.when)}</div>
+                      </div>
+                    )}
+                  </details>
+                );
+              })
             )}
           </div>
         </main>

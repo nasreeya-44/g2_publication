@@ -19,14 +19,15 @@ type Detail = {
   authors: Array<{ order: number; name: string; role: string }>;
   history: Array<{ when: string; by: string; action: string }>;
   review_files_count: number;
+  abstract?: string | null;          // 👈 เพิ่มชนิด
 };
 
 export default function StaffReviewDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>; // 👈 Next 15: params เป็น Promise
+  params: Promise<{ id: string }>;
 }) {
-  const { id: idStr } = use(params);              // 👈 unwrap ด้วย React.use()
+  const { id: idStr } = use(params);
   const id = Number(idStr);
 
   const [d, setD] = useState<Detail | null>(null);
@@ -42,7 +43,7 @@ export default function StaffReviewDetailPage({
       const res = await fetch(`/api/staff/reviews/${id}`, { cache: "no-store" });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.message || "load failed");
-      setD(j.data);
+      setD(j.data as Detail);
     } finally {
       setLoading(false);
     }
@@ -50,7 +51,6 @@ export default function StaffReviewDetailPage({
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function uploadFiles() {
@@ -58,10 +58,7 @@ export default function StaffReviewDetailPage({
     if (!f) return;
     const fd = new FormData();
     fd.append("file", f);
-    const r = await fetch(`/api/staff/reviews/${id}/files`, {
-      method: "POST",
-      body: fd,
-    });
+    const r = await fetch(`/api/staff/reviews/${id}/files`, { method: "POST", body: fd });
     const j = await r.json();
     if (!r.ok) return alert(j?.message || "อัปโหลดไม่สำเร็จ");
     fileRef.current!.value = "";
@@ -94,9 +91,7 @@ export default function StaffReviewDetailPage({
         <StaffSideRail />
         <main className="md:ml-[80px]">
           {!Number.isFinite(id) ? (
-            <div className="p-8 text-center text-sm text-rose-600">
-              รหัสไม่ถูกต้อง
-            </div>
+            <div className="p-8 text-center text-sm text-rose-600">รหัสไม่ถูกต้อง</div>
           ) : loading || !d ? (
             <div className="p-8 text-center text-sm text-gray-500">กำลังโหลด…</div>
           ) : (
@@ -121,13 +116,26 @@ export default function StaffReviewDetailPage({
                     <div className="col-span-2">
                       <span className="text-gray-500">ลิงก์ DOI: </span>
                       {d.doi_url ? (
-                        <a className="text-blue-600 underline" href={d.doi_url} target="_blank">
-                          {d.doi_url}
-                        </a>
-                      ) : (
-                        "-"
-                      )}
+                        <a className="text-blue-600 underline" href={d.doi_url} target="_blank">{d.doi_url}</a>
+                      ) : ("-")}
                     </div>
+                  </div>
+
+                  {/* 🔽 บทคัดย่อ */}
+                  <div className="mt-5">
+                    <div className="text-sm font-semibold text-slate-900 mb-1">บทคัดย่อ</div>
+                    {d.abstract ? (
+                      <details className="group">
+                        <summary className="cursor-pointer text-sm text-blue-700 hover:underline">
+                          แสดง/ซ่อน บทคัดย่อ
+                        </summary>
+                        <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800">
+                          {d.abstract}
+                        </div>
+                      </details>
+                    ) : (
+                      <div className="text-sm text-gray-500">- ไม่มีบทคัดย่อ -</div>
+                    )}
                   </div>
                 </div>
 
@@ -141,19 +149,14 @@ export default function StaffReviewDetailPage({
                     </div>
                     <div className="mt-1 space-y-1">
                       {d.authors.map((a) => (
-                        <div
-                          key={a.order}
-                          className="grid grid-cols-12 items-center px-2 py-1 rounded hover:bg-gray-50"
-                        >
+                        <div key={a.order} className="grid grid-cols-12 items-center px-2 py-1 rounded hover:bg-gray-50">
                           <div className="col-span-1 text-xs">{a.order}</div>
                           <div className="col-span-8">{a.name}</div>
                           <div className="col-span-3 text-xs uppercase text-gray-600">{a.role}</div>
                         </div>
                       ))}
                     </div>
-                    <div className="text-[11px] text-gray-500 mt-3">
-                      หมายเหตุ: เรียงตาม author_order
-                    </div>
+                    <div className="text-[11px] text-gray-500 mt-3">หมายเหตุ: เรียงตาม author_order</div>
                   </div>
                 </div>
               </div>
@@ -173,32 +176,21 @@ export default function StaffReviewDetailPage({
                   <div className="text-sm text-gray-700 mb-2">ไฟล์แนบ/สิ่งที่เกี่ยวข้อง</div>
                   <div className="flex items-center gap-3">
                     <input ref={fileRef} type="file" accept="application/pdf" onChange={uploadFiles} />
-                    <div className="text-sm text-gray-600">
-                      ไฟล์ PDF แนบ ({d.review_files_count})
-                    </div>
+                    <div className="text-sm text-gray-600">ไฟล์ PDF แนบ ({d.review_files_count})</div>
                   </div>
                 </div>
 
                 <div className="mt-5 grid md:grid-cols-3 gap-3">
-                  <button
-                    onClick={() => doAction("request")}
-                    disabled={saving !== null}
-                    className="rounded-xl bg-rose-600 text-white py-3 hover:bg-rose-700"
-                  >
+                  <button onClick={() => doAction("request")} disabled={saving !== null}
+                          className="rounded-xl bg-rose-600 text-white py-3 hover:bg-rose-700">
                     {saving === "request" ? "กำลังส่งคืน…" : "ส่งคืนเพื่อแก้ไข"}
                   </button>
-                  <button
-                    onClick={() => doAction("approve")}
-                    disabled={saving !== null}
-                    className="rounded-xl bg-green-600 text-white py-3 hover:bg-green-700"
-                  >
+                  <button onClick={() => doAction("approve")} disabled={saving !== null}
+                          className="rounded-xl bg-green-600 text-white py-3 hover:bg-green-700">
                     {saving === "approve" ? "กำลังอนุมัติ…" : "อนุมัติผลงาน"}
                   </button>
-                  <button
-                    onClick={() => doAction("draft")}
-                    disabled={saving !== null}
-                    className="rounded-xl bg-slate-800 text-white py-3 hover:bg-slate-900"
-                  >
+                  <button onClick={() => doAction("draft")} disabled={saving !== null}
+                          className="rounded-xl bg-slate-800 text-white py-3 hover:bg-slate-900">
                     {saving === "draft" ? "กำลังบันทึก…" : "บันทึกเป็นร่าง"}
                   </button>
                 </div>
