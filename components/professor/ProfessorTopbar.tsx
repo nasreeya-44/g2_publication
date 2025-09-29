@@ -3,7 +3,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams, useRouter } from 'next/navigation';
 import ProfileMenu from './ProfileMenu';
 
 type Props = {
@@ -14,35 +14,34 @@ type Props = {
 };
 
 type NotiItem = {
+  noti_id: number;           // ← เพิ่ม
   pub_id: number;
   title: string;
   venue_name: string | null;
   year: number | null;
-  status: string;
+  status: string | null;
   updated_at: string;
   latest_comment: string | null;
+  is_unread?: boolean;
 };
 
 function getTitle(pathname: string, search: URLSearchParams) {
   const p = pathname.replace(/\/+$/, '');
-
   if (p === '/professor/dashboard') return 'จัดการผลงานตีพิมพ์';
   if (p === '/professor/publications') return 'ผลงานทั้งหมด (Published)';
   if (p === '/professor/publications/new') return 'สร้างผลงานใหม่';
-
   if (/^\/professor\/publications\/\d+(\/edit)?$/.test(p)) {
     if (p.endsWith('/edit') || search.get('edit') === '1') return 'แก้ไขผลงานตีพิมพ์';
     return 'ดูรายละเอียดผลงานตีพิมพ์';
   }
-
   if (p === '/professor/profile') return 'โปรไฟล์ของฉัน';
-
   return 'จัดการผลงานตีพิมพ์';
 }
 
 export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: Props) {
   const pathname = usePathname();
   const search = useSearchParams();
+  const router = useRouter();
   const title = getTitle(pathname, search);
 
   // ====== Notifications state ======
@@ -51,7 +50,7 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<NotiItem[]>([]);
 
-  const notiCount = items.length;
+  const notiCount = items.filter(i => i.is_unread).length;
 
   async function loadNotifications() {
     setLoading(true);
@@ -71,7 +70,7 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
 
   useEffect(() => {
     loadNotifications();
-    const t = setInterval(loadNotifications, 60_000); // refresh ทุก 60 วินาที
+    const t = setInterval(loadNotifications, 60_000);
     return () => clearInterval(t);
   }, []);
 
@@ -79,6 +78,23 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
     const r = (role || '').toUpperCase();
     return r === 'PROFESSOR' ? 'Professor' : r || 'User';
   }, [role]);
+
+  // คลิกเปิดและมาร์คอ่านเฉพาะ noti_id นั้น
+  async function openAndMarkRead(notiId: number, href: string) {
+    try {
+      await fetch('/api/professor/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noti_id: notiId }),
+      });
+    } catch {
+      // ไม่ block การนำทาง
+    } finally {
+      router.push(href);
+      setOpen(false);
+      setItems(prev => prev.map(it => it.noti_id === notiId ? { ...it, is_unread: false } : it));
+    }
+  }
 
   return (
     <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b shadow-sm">
@@ -92,7 +108,7 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
               onClick={() => setOpen((v) => !v)}
               className="relative inline-flex items-center justify-center w-10 h-10 rounded-full border bg-white hover:bg-zinc-50"
               aria-label="notifications"
-              title="งานที่ต้องแก้ไข (needs_revision)"
+              title="งานที่ต้องแก้ไข / อัปเดตโดยเจ้าหน้าที่"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-5 h-5 text-zinc-700">
                 <path
@@ -113,38 +129,42 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
             <div
               className={`absolute right-0 mt-2 w-[360px] max-w-[90vw] bg-white border rounded-xl shadow-lg overflow-hidden ${open ? 'block' : 'hidden'}`}
             >
-              <div className="px-3 py-2 border-b text-sm font-medium">งานที่ต้องแก้ไข (needs_revision)</div>
+              <div className="px-3 py-2 border-b text-sm font-medium">การแจ้งเตือนล่าสุด</div>
 
               {loading ? (
                 <div className="px-3 py-4 text-sm text-gray-500">กำลังโหลด...</div>
               ) : err ? (
                 <div className="px-3 py-4 text-sm text-rose-600">{err}</div>
               ) : items.length === 0 ? (
-                <div className="px-3 py-4 text-sm text-gray-500">ไม่มีรายการที่ต้องแก้ไข</div>
+                <div className="px-3 py-4 text-sm text-gray-500">ไม่มีแจ้งเตือน</div>
               ) : (
                 <ul className="max-h-[60vh] overflow-auto">
-                  {items.map((it) => (
-                    <li key={it.pub_id} className="border-b last:border-b-0">
-                      <Link
-                        href={`/professor/publications/${it.pub_id}/edit`}
-                        className="block px-3 py-3 hover:bg-zinc-50"
-                        onClick={() => setOpen(false)}
-                      >
-                        <div className="font-medium text-zinc-900 truncate">{it.title}</div>
-                        <div className="text-xs text-zinc-500 flex items-center gap-2">
-                          <span>{it.venue_name || '-'}</span>
-                          <span>•</span>
-                          <span>{it.year ?? '-'}</span>
-                        </div>
-                        {it.latest_comment && (
-                          <div className="mt-1 text-[13px] text-zinc-700 line-clamp-2">“{it.latest_comment}”</div>
-                        )}
-                        <div className="mt-1 text-[11px] text-zinc-400">
-                          อัปเดตล่าสุด: {new Date(it.updated_at).toLocaleString()}
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
+                  {items.map((it) => {
+                    const href = `/professor/publications/${it.pub_id}/edit`;
+                    const unread = !!it.is_unread;
+                    return (
+                      <li key={it.noti_id} className={`border-b last:border-b-0 ${unread ? 'bg-indigo-50/60' : ''}`}>
+                        <button
+                          className="w-full text-left block px-3 py-3 hover:bg-zinc-50"
+                          onClick={() => openAndMarkRead(it.noti_id, href)}
+                        >
+                          <div className="font-medium text-zinc-900 truncate">{it.title}</div>
+                          <div className="text-xs text-zinc-500 flex items-center gap-2">
+                            <span>{it.venue_name || '-'}</span>
+                            <span>•</span>
+                            <span>{it.year ?? '-'}</span>
+                          </div>
+                          {it.latest_comment && (
+                            <div className="mt-1 text-[13px] text-zinc-700 line-clamp-2">“{it.latest_comment}”</div>
+                          )}
+                          <div className="mt-1 text-[11px] text-zinc-400">
+                            {unread && <span className="mr-2 inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 text-[10px]">ยังไม่อ่าน</span>}
+                            สร้างเมื่อ: {new Date(it.updated_at).toLocaleString()}
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
 
@@ -154,13 +174,13 @@ export default function ProfessorTopbar({ name, role, avatarUrl, profileHref }: 
                   className="text-xs text-indigo-700 hover:underline"
                   onClick={() => setOpen(false)}
                 >
-                  ดูทั้งหมด
+                  ไปยังงานที่ต้องแก้ไข
                 </Link>
               </div>
             </div>
           </div>
 
-          {/* Profile menu (เดิม) */}
+          {/* Profile menu */}
           <ProfileMenu
             name={name}
             role={roleTitle}

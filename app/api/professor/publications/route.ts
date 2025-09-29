@@ -47,7 +47,6 @@ const bad = (m: string, s = 400) => NextResponse.json({ ok: false, message: m },
 const ok  = (obj: any = {}) => NextResponse.json({ ok: true, ...obj });
 
 // ---------- helpers (DB upsert/find) ----------
-
 async function upsertPersonWithType(
   full_name: string,
   email?: string | null,
@@ -145,13 +144,34 @@ function parseAuthorsJson(
   }
 }
 
-function parseHasPdf(val: unknown): boolean {
-  const s = String(val ?? '').trim().toLowerCase();
-  return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+function parseHasPdfParam(sp: URLSearchParams): null | boolean {
+  // รองรับ hasPdf=1/0 และ has_pdf=true/false
+  const hasPdf = sp.get('hasPdf');
+  const has_pdf = sp.get('has_pdf');
+  if (hasPdf === '1' || (has_pdf && ['1','true','yes','on'].includes(has_pdf))) return true;
+  if (hasPdf === '0' || (has_pdf && ['0','false','no','off'].includes(has_pdf))) return false;
+  return null; // any
 }
 
 function sanitizePathSegment(s: string) {
   return s.replace(/[^\w.\-]+/g, '_');
+}
+
+// ใช้ % (ไม่ใช่ *) ใน pattern ของ PostgREST
+function safeOrIlikeList(col: string, terms: string[]) {
+  // แปลงเป็น: full_name.ilike.%abc%,full_name.ilike.%def%
+  return terms
+    .map(t => t.replace(/[(),]/g, ' ').trim())
+    .filter(Boolean)
+    .map(t => `${col}.ilike.%${t}%`)
+    .join(',');
+}
+
+// ชุดตัดกัน (สำหรับ AND semantics)
+function intersectSets(a: Set<number>, b: Set<number>) {
+  const out = new Set<number>();
+  for (const x of a) if (b.has(x)) out.add(x);
+  return out;
 }
 
 // ---------- GET ----------
@@ -164,44 +184,118 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const q           = searchParams.get('q')?.trim() || '';
-    const statusUi    = searchParams.get('status')?.trim() || '';
-    const level       = searchParams.get('level')?.trim() || '';
-    const hasFileFlag = searchParams.get('hasFile') === '1' || searchParams.get('hasPdf') === '1';
-    const onlyMine    = searchParams.get('mine') === '1';
-    const withStudents= searchParams.get('withStudents') === '1';
-    const yearFrom    = toInt(searchParams.get('yearFrom'));
-    const yearTo      = toInt(searchParams.get('yearTo'));
 
-    // ✅ ใหม่
-    const authorName  = searchParams.get('author')?.trim() || '';
-    const categoryQ   = searchParams.get('category')?.trim() || '';
-    const venueTypeQ  = searchParams.get('venueType')?.trim() || '';
+    // ===== NEW: Suggest endpoints for autocomplete =====
+    const suggest = (searchParams.get('suggest') || '').toLowerCase().trim();
+    if (suggest === 'author' || suggest === 'category') {
+      const sq = (searchParams.get('q') || searchParams.get('term') || '').trim();
+      const limit = Math.min(20, Math.max(1, toInt(searchParams.get('limit'), 10) || 10));
 
-    const page        = Math.max(1, toInt(searchParams.get('page'), 1)!);
-    const pageSize    = Math.min(50, Math.max(1, toInt(searchParams.get('pageSize'), 20)!));
-    const from        = (page - 1) * pageSize;
-    const to          = from + pageSize - 1;
+      if (!sq) return NextResponse.json({ options: [], data: [] });
+
+      if (suggest === 'author') {
+        const { data, error } = await supabase
+          .from('person')
+          .select('full_name')
+          .ilike('full_name', `%${sq}%`)
+          .order('full_name', { ascending: true })
+          .limit(limit);
+        if (error) throw error;
+
+        const names = Array.from(new Set((data || [])
+          .map((p: any) => String(p.full_name || '').trim())
+          .filter(Boolean)));
+
+        return NextResponse.json({ options: names, data: names });
+      }
+
+      if (suggest === 'category') {
+        const { data, error } = await supabase
+          .from('category')
+          .select('category_name')
+          .eq('status', 'ACTIVE')
+          .ilike('category_name', `%${sq}%`)
+          .order('category_name', { ascending: true })
+          .limit(limit);
+        if (error) throw error;
+
+        const names = Array.from(new Set((data || [])
+          .map((c: any) => String(c.category_name || '').trim())
+          .filter(Boolean)));
+
+        return NextResponse.json({ options: names, data: names });
+      }
+    }
+    // ===== end suggest =====
+
+    // ===== Publications search =====
+    // คีย์เวิร์ดหลัก
+    const q = searchParams.get('q')?.trim() || '';
+
+    // หลายสถานะ/ระดับ
+    const statusesRaw = [
+      ...searchParams.getAll('status'),
+      ...searchParams.getAll('statuses'),
+    ].map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const levelsRaw = [
+      ...searchParams.getAll('level'),
+      ...searchParams.getAll('levels'),
+    ].map((s) => s.trim().toUpperCase()).filter(Boolean);
+
+    // ปี (รองรับสองแบบ)
+    const yearFrom = toInt(searchParams.get('yearFrom') ?? searchParams.get('year_from'));
+    const yearTo   = toInt(searchParams.get('yearTo')   ?? searchParams.get('year_to'));
+
+    // PDF
+    const hasPdfFlag = parseHasPdfParam(searchParams); // true / false / null(any)
+
+    // เจ้าของ / หัวหน้า
+    const onlyMine   = searchParams.get('mine') === '1';
+    const leaderOnly = searchParams.get('leaderOnly') === '1';
+
+    // นักศึกษาเป็นผู้ร่วม
+    const withStudents = searchParams.get('withStudents') === '1' || searchParams.get('only_student') === '1';
+
+    // ผู้แต่ง (รองรับคั่นด้วย , → AND semantics)
+    const authorRaw = (searchParams.get('author')?.trim() || searchParams.get('author_name')?.trim() || '');
+    const authorTerms = authorRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+    // หมวดหมู่ (หลายค่า → AND semantics)
+    const catsMulti = searchParams.getAll('cat').map((s) => s.trim()).filter(Boolean);
+    const catsFromComma = (searchParams.get('categories') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const catTerms = Array.from(new Set([...catsMulti, ...catsFromComma]));
+
+    // ประเภท (รองรับหลายคีย์)
+    const typeQ = (searchParams.get('type') || searchParams.get('ptype') || searchParams.get('venueType') || '').trim();
+
+    // เพจ
+    const page     = Math.max(1, toInt(searchParams.get('page'), 1)!);
+    const pageSize = Math.min(50, Math.max(1, toInt(searchParams.get('pageSize'), 20)!));
+    const from     = (page - 1) * pageSize;
+    const to       = from + pageSize - 1;
 
     // ------- my person ids (สำหรับ mine) -------
     let myPersonIds: number[] = [];
-    {
+    if (onlyMine) {
       const { data, error } = await supabase
         .from('person')
         .select('person_id')
         .eq('user_id', me.user_id);
       if (error) throw error;
       myPersonIds = (data || []).map((x: any) => x.person_id);
+      if (!myPersonIds.length) return NextResponse.json({ data: [], total: 0 });
     }
 
-    // ------- pub ids ของฉัน -------
+    // ------- pub ids ของฉัน (+ เฉพาะหัวหน้า) -------
     let pubIdsMine: number[] = [];
     if (onlyMine) {
-      if (!myPersonIds.length) return NextResponse.json({ data: [], total: 0 });
-      const { data, error } = await supabase
-        .from('publication_person')
-        .select('pub_id')
-        .in('person_id', myPersonIds);
+      let qMine = supabase.from('publication_person').select('pub_id, role, person_id');
+      qMine = qMine.in('person_id', myPersonIds);
+      if (leaderOnly) qMine = qMine.eq('role', 'LEAD');
+      const { data, error } = await qMine;
       if (error) throw error;
       pubIdsMine = (data || []).map((x: any) => x.pub_id);
       if (!pubIdsMine.length) return NextResponse.json({ data: [], total: 0 });
@@ -216,42 +310,97 @@ export async function GET(req: NextRequest) {
         .not('person.person_type', 'is', null);
       if (error) throw error;
       pubIdsWithStudents = (data || [])
-        .filter((x: any) => String(x.person?.person_type || '').toLowerCase() === 'student')
+        .filter((x: any) => String(x.person?.person_type || '').toUpperCase() === 'STUDENT')
         .map((x: any) => x.pub_id);
       if (!pubIdsWithStudents.length) return NextResponse.json({ data: [], total: 0 });
     }
 
-    // ------- ✅ pub ids ตามชื่อผู้เขียน -------
+    // ------- ✅ pub ids ตามชื่อผู้แต่ง (AND semantics) -------
     let pubIdsByAuthor: number[] | null = null;
-    if (authorName) {
-      const { data, error } = await supabase
-        .from('publication_person')
-        .select('pub_id, person:person_id(full_name)')
-        .ilike('person.full_name', `%${authorName}%`);
-      if (error) throw error;
-      pubIdsByAuthor = (data || []).map((x: any) => x.pub_id);
-      if (pubIdsByAuthor.length === 0) return NextResponse.json({ data: [], total: 0 });
+    if (authorTerms.length) {
+      let accSet: Set<number> | null = null;
+
+      for (const term of authorTerms) {
+        // 1) หา person_id ที่ชื่อ match term
+        const { data: persons, error: perr } = await supabase
+          .from('person')
+          .select('person_id')
+          .ilike('full_name', `%${term}%`);
+        if (perr) throw perr;
+
+        const personIds = (persons || []).map((p: any) => p.person_id);
+        if (personIds.length === 0) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+
+        // 2) หา pub_id ที่มีคนเหล่านี้เป็นผู้แต่ง
+        const { data: ppubs, error: pperr } = await supabase
+          .from('publication_person')
+          .select('pub_id')
+          .in('person_id', personIds);
+        if (pperr) throw pperr;
+
+        const thisSet = new Set((ppubs || []).map((x: any) => x.pub_id));
+        if (thisSet.size === 0) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+
+        accSet = accSet ? intersectSets(accSet, thisSet) : thisSet;
+        if (!accSet.size) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+      }
+
+      pubIdsByAuthor = Array.from(accSet!);
     }
 
-    // ------- ✅ pub ids ตามหมวดหมู่ -------
+    // ------- ✅ pub ids ตามหมวดหมู่ (AND semantics) -------
     let pubIdsByCategory: number[] | null = null;
-    if (categoryQ) {
-      const { data, error } = await supabase
-        .from('category_publication')
-        .select('pub_id, category:category_id(category_name)')
-        .ilike('category.category_name', `%${categoryQ}%`);
-      if (error) throw error;
-      pubIdsByCategory = (data || []).map((x: any) => x.pub_id);
-      if (pubIdsByCategory.length === 0) return NextResponse.json({ data: [], total: 0 });
+    if (catTerms.length) {
+      let accSet: Set<number> | null = null;
+
+      for (const term of catTerms) {
+        // 1) หา category_id ตามชื่อ (ACTIVE เท่านั้น)
+        const { data: cats, error: catErr } = await supabase
+          .from('category')
+          .select('category_id')
+          .eq('status', 'ACTIVE')
+          .ilike('category_name', `%${term}%`);
+        if (catErr) throw catErr;
+
+        const catIds = (cats || []).map((c: any) => c.category_id);
+        if (catIds.length === 0) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+
+        // 2) หา pub_id ที่อยู่ในหมวดหมู่เหล่านี้
+        const { data: cp, error: cpErr } = await supabase
+          .from('category_publication')
+          .select('pub_id')
+          .in('category_id', catIds);
+        if (cpErr) throw cpErr;
+
+        const thisSet = new Set((cp || []).map((x: any) => x.pub_id));
+        if (thisSet.size === 0) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+
+        accSet = accSet ? intersectSets(accSet, thisSet) : thisSet;
+        if (!accSet.size) {
+          return NextResponse.json({ data: [], total: 0 });
+        }
+      }
+
+      pubIdsByCategory = Array.from(accSet!);
     }
 
-    // ------- ✅ venue ids ตามประเภท (venue.type) -------
+    // ------- venue ids ตามประเภท -------
     let venueIdsByType: number[] | null = null;
-    if (venueTypeQ) {
+    if (typeQ) {
       const { data, error } = await supabase
         .from('venue')
         .select('venue_id')
-        .ilike('type', `%${venueTypeQ}%`);
+        .ilike('type', `%${typeQ}%`);
       if (error) throw error;
       venueIdsByType = (data || []).map((v: any) => v.venue_id);
       if (venueIdsByType.length === 0) return NextResponse.json({ data: [], total: 0 });
@@ -266,13 +415,23 @@ export async function GET(req: NextRequest) {
       query = query.or(`pub_name.ilike.%${q}%,venue_name.ilike.%${q}%,link_url.ilike.%${q}%`);
     }
 
-    const statusDb = statusUi ? uiStatusToDb(statusUi) : null;
-    if (statusDb) query = query.eq('status', statusDb);
+    // สถานะหลายค่า
+    if (statusesRaw.length) {
+      const normalized = statusesRaw.map(uiStatusToDb).filter(Boolean) as string[];
+      if (normalized.length) query = query.in('status', normalized);
+      else return NextResponse.json({ data: [], total: 0 });
+    }
 
-    if (level)        query = query.ilike('level', level);
-    if (hasFileFlag)  query = query.eq('has_pdf', true);
+    // ระดับหลายค่า (เก็บใน DB เป็นตัวพิมพ์ใหญ่)
+    if (levelsRaw.length) {
+      query = query.in('level', levelsRaw);
+    }
+
     if (yearFrom != null) query = query.gte('year', yearFrom);
     if (yearTo   != null) query = query.lte('year', yearTo);
+
+    if (hasPdfFlag === true)  query = query.eq('has_pdf', true);
+    if (hasPdfFlag === false) query = query.eq('has_pdf', false);
 
     if (onlyMine)         query = query.in('pub_id', pubIdsMine);
     if (withStudents)     query = query.in('pub_id', pubIdsWithStudents);
@@ -280,7 +439,7 @@ export async function GET(req: NextRequest) {
     if (pubIdsByCategory) query = query.in('pub_id', pubIdsByCategory);
     if (venueIdsByType)   query = query.in('venue_id', venueIdsByType);
 
-    query = query.order('year', { ascending: false }).range(from, to);
+    query = query.order('year', { ascending: false }).order('pub_id', { ascending: false }).range(from, to);
 
     const { data: pubs, error: qerr, count } = await query;
     if (qerr) throw qerr;
@@ -304,7 +463,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ---------- POST (เดิมของคุณ) ----------
+// ---------- POST (เดิม) ----------
 export async function POST(req: NextRequest) {
   const me = await getUserFromCookie(req);
   if (!me) return bad('Unauthorized', 401);
@@ -327,7 +486,10 @@ export async function POST(req: NextRequest) {
       const statusUi  = String(fd.get('status') || '').trim() || 'draft';
       const catsRaw   = String(fd.get('categories') || '');
 
-      const hasPdfFlag = parseHasPdf(fd.get('has_pdf'));
+      const hasPdfFlag = (() => {
+        const v = (fd.get('has_pdf') ?? '').toString().toLowerCase();
+        return v === '1' || v === 'true' || v === 'on' || v === 'yes';
+      })();
 
       const catNames = Array.from(new Set(
         catsRaw.split(',').map(s => s.trim()).filter(Boolean)
@@ -399,10 +561,8 @@ export async function POST(req: NextRequest) {
             author_order: a.author_order || null,
           });
         }
-        if (rows.length) {
-          const { error } = await supabase.from('publication_person').insert(rows);
-          if (error) throw error;
-        }
+        const { error } = await supabase.from('publication_person').insert(rows);
+        if (error) throw error;
       }
 
       const { error: histErr } = await supabase
@@ -486,10 +646,8 @@ export async function POST(req: NextRequest) {
         const cid = await ensureCategory(String(raw));
         if (cid) rows.push({ pub_id, category_id: cid });
       }
-      if (rows.length) {
-        const { error } = await supabase.from('category_publication').insert(rows);
-        if (error) throw error;
-      }
+      const { error } = await supabase.from('category_publication').insert(rows);
+      if (error) throw error;
     }
 
     const { error: histErr } = await supabase

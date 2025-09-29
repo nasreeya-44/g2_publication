@@ -10,7 +10,7 @@ const supabase = createClient(
 
 type UserPayload = { user_id: number; username: string; role: 'ADMIN'|'STAFF'|'PROFESSOR' };
 
-async function getUserFromCookie(req: NextRequest): Promise<UserPayload | null> {
+async function me(req: NextRequest): Promise<UserPayload | null> {
   const token = req.cookies.get('app_session')?.value;
   if (!token) return null;
   try {
@@ -21,92 +21,50 @@ async function getUserFromCookie(req: NextRequest): Promise<UserPayload | null> 
   }
 }
 
-const bad = (m: string, s = 400) => NextResponse.json({ ok: false, message: m }, { status: s });
-
-/**
- * ส่งกลับรายการ “ผลงานที่ต้องแก้ไข” ของอาจารย์ผู้ใช้ปัจจุบัน
- * เกณฑ์: เป็น LEAD ของงานนั้น และสถานะปัจจุบัน = needs_revision
- * แนบคอมเมนต์ล่าสุดจาก review_action (ถ้ามี)
- */
 export async function GET(req: NextRequest) {
-  const me = await getUserFromCookie(req);
-  if (!me) return bad('Unauthorized', 401);
-  if (me.role !== 'PROFESSOR' && me.role !== 'ADMIN') return bad('Forbidden', 403);
+  const user = await me(req);
+  if (!user) return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+  if (user.role !== 'PROFESSOR' && user.role !== 'ADMIN')
+    return NextResponse.json({ ok: false, message: 'Forbidden' }, { status: 403 });
+
+  const url = new URL(req.url);
+  const onlyUnread = url.searchParams.get('unread') === '1';
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 50)));
 
   try {
-    // 1) ดึง person_id ของ user นี้
-    const { data: persons, error: pErr } = await supabase
-      .from('person')
-      .select('person_id')
-      .eq('user_id', me.user_id);
-    if (pErr) throw pErr;
+    // ดึง noti ของ user
+    let q = supabase
+      .from('notification')
+      .select(`
+        noti_id, pub_id, event_type, status, comment, created_at, is_read, read_at,
+        publication:pub_id(pub_name, venue_name, year, updated_at)
+      `)
+      .eq('user_id', user.user_id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
-    const myPersonIds = (persons || []).map((x: any) => x.person_id);
-    if (!myPersonIds.length) {
-      return NextResponse.json({ ok: true, count: 0, items: [] });
-    }
+    if (onlyUnread) q = q.eq('is_read', false);
 
-    // 2) pub_id ที่เราเป็น LEAD
-    const { data: myLead, error: leadErr } = await supabase
-      .from('publication_person')
-      .select('pub_id, role')
-      .in('person_id', myPersonIds);
-    if (leadErr) throw leadErr;
+    const { data, error } = await q;
+    if (error) throw error;
 
-    const leadPubIds = (myLead || [])
-      .filter((r: any) => String(r.role || '').toUpperCase() === 'LEAD')
-      .map((r: any) => r.pub_id);
+    const items = (data || []).map((r: any) => ({
+      noti_id: r.noti_id as number,
+      pub_id: r.pub_id as number,
+      title: r.publication?.pub_name || `#${r.pub_id}`,
+      venue_name: r.publication?.venue_name ?? null,
+      year: r.publication?.year ?? null,
+      status: r.status ?? r.event_type ?? null,
+      latest_comment: r.comment ?? null,
+      updated_at: r.created_at,
+      is_unread: !r.is_read,
+    }));
 
-    if (!leadPubIds.length) {
-      return NextResponse.json({ ok: true, count: 0, items: [] });
-    }
+    const unreadCount = (data || []).filter((x: any) => !x.is_read).length;
 
-    // 3) รายการงานที่ต้องแก้ไข (needs_revision)
-    const { data: pubs, error: pubErr } = await supabase
-      .from('publication')
-      .select('pub_id, pub_name, venue_name, status, updated_at, year')
-      .in('pub_id', leadPubIds)
-      .eq('status', 'needs_revision')
-      .order('updated_at', { ascending: false });
-    if (pubErr) throw pubErr;
-
-    if (!pubs?.length) {
-      return NextResponse.json({ ok: true, count: 0, items: [] });
-    }
-
-    const pubIds = pubs.map((p: any) => p.pub_id);
-
-    // 4) คอมเมนต์ล่าสุดจากเจ้าหน้าที่ (review_action)
-    //    ดึงมารอบเดียวแล้วจับคู่เอง
-    const { data: reviews } = await supabase
-      .from('review_action')
-      .select('pub_id, action, comment, reviewer_user_id')
-      .in('pub_id', pubIds);
-
-    // รวมผล
-    const items = pubs.map((p: any) => {
-      const latestStaffComment = (reviews || [])
-        .filter((r: any) => r.pub_id === p.pub_id && r.reviewer_user_id) // มีผู้รีวิว (staff)
-        .map((r: any) => String(r.comment || '').trim())
-        .filter(Boolean)
-        .pop() || null; // เอา comment ตัวท้ายสุดจากชุดที่ดึงได้
-
-      return {
-        pub_id: p.pub_id,
-        title: p.pub_name || p.venue_name || `#${p.pub_id}`,
-        venue_name: p.venue_name || null,
-        year: p.year || null,
-        status: p.status,
-        updated_at: p.updated_at,
-        latest_comment: latestStaffComment,
-      };
-    });
-
-    return NextResponse.json({ ok: true, count: items.length, items });
+    return NextResponse.json({ ok: true, items, unreadCount });
   } catch (e: any) {
-    console.error('professor notifications error:', e?.message || e);
-    return bad(e?.message || 'internal error', 500);
+    console.error('notifications list error:', e?.message || e);
+    return NextResponse.json({ ok: false, message: e?.message || 'internal error' }, { status: 500 });
   }
 }
-
-export const dynamic = 'force-dynamic';
