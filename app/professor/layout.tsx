@@ -5,7 +5,7 @@ import { jwtVerify } from 'jose';
 import { createClient } from '@supabase/supabase-js';
 
 import ProfessorSidebar from '@/components/professor/ProfessorSidebar';
-import ProfileMenu from '@/components/professor/ProfileMenu';
+import ProfessorTopbar from '@/components/professor/ProfessorTopbar';
 
 type TokenPayload = {
   user_id: number;
@@ -71,49 +71,30 @@ async function getMe(): Promise<Me | null> {
   }
 }
 
-export default async function ProfessorLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export default async function ProfessorLayout({ children }: { children: ReactNode }) {
   const me = await getMe();
   const displayName = me?.full_name || me?.username || 'Professor';
   const displayRole = me?.role || 'PROFESSOR';
-
-  // ถ้าไม่มีรูปใน DB ใช้ Dicebear เป็น fallback
   const avatar =
     me?.avatar_url ||
-    `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(
-      me?.username || 'user'
-    )}`;
+    `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(me?.username || 'user')}`;
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      {/* Topbar — เพิ่มความสูง h-16 และ padding ให้ไม่เบียดขอบล่าง */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="text-[15px] font-semibold text-zinc-800">
-            จัดการผลงานตีพิมพ์
-          </div>
-
-          <ProfileMenu
-            name={displayName}
-            role={displayRole}
-            avatarUrl={avatar}
-            profileHref="/professor/profile"
-          />
-        </div>
-      </header>
+      {/* Topbar แบบไดนามิก */}
+      <ProfessorTopbar
+        name={displayName}
+        role={displayRole}
+        avatarUrl={avatar}
+        profileHref="/professor/profile"
+      />
 
       {/* Main grid */}
       <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
         <aside className="col-span-12 md:col-span-3 lg:col-span-2">
           <ProfessorSidebar />
         </aside>
-
-        <main className="col-span-12 md:col-span-9 lg:col-span-10">
-          {children}
-        </main>
+        <main className="col-span-12 md:col-span-9 lg:col-span-10">{children}</main>
       </div>
     </div>
   );
