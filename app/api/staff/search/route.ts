@@ -13,15 +13,15 @@ type Row = {
   level: string | null;
   updated_at: string | null;
   has_pdf: boolean | null;
-  // join ผู้แต่ง
+  status?: string | null;         // ← เพิ่ม type เพื่อความชัดเจน
+  link_url?: string | null;       // ← เพิ่ม
+  file_path?: string | null;      // ← เพิ่ม
   publication_person?: Array<{
     person: { full_name: string | null } | null;
   }>;
-  // join หมวดหมู่ผ่านตารางกลาง category_publication → category(category_name)
   category_publication?: Array<{
     category: { category_name: string | null } | null;
   }>;
-  // เอาประเภทวารสาร/งานประชุมจากตาราง venue (ตาม schema)
   venue?: { type: string | null } | null;
 };
 
@@ -41,16 +41,15 @@ export async function GET(req: NextRequest) {
     let yearTo = sp.get("year_to") ? Number(sp.get("year_to")) : null;
     if (yearFrom && yearTo && yearFrom > yearTo) [yearFrom, yearTo] = [yearTo, yearFrom];
 
-    // ประเภทงานใน schema นี้อยู่ที่ตาราง venue.type
     const ptype = sp.get("type") || ""; // JOURNAL / CONFERENCE / BOOK
-    const levels = sp.getAll("level");  // NATIONAL / INTERNATIONAL
+    const levels = sp.getAll("level");
     const hasPdf = sp.get("has_pdf");   // "true" | "false" | null
     const onlyStudent = sp.get("only_student") === "1";
-    const cats = sp.getAll("cat");      // category_name ที่เลือกมา
+    const cats = sp.getAll("cat");
 
     // ---------- SELECT + JOIN ให้ตรง schema ----------
     const select =
-      "pub_id, pub_name, year, level, updated_at, has_pdf," +
+      "pub_id, pub_name, year, level, updated_at, has_pdf, status, link_url, file_path," + // ← เพิ่ม
       "venue:venue(type)," +
       "publication_person(person:person(full_name))," +
       "category_publication(category:category(category_name))";
@@ -74,10 +73,10 @@ export async function GET(req: NextRequest) {
     if (cats.length) {
       const set = new Set(cats.map((c) => c.toLowerCase()));
       rows = rows.filter((r) =>
-        (r.category_publication ?? []).some((cp) =>
-          (cp?.category?.category_name || "").toLowerCase() &&
-          set.has((cp!.category!.category_name as string).toLowerCase())
-        )
+        (r.category_publication ?? []).some((cp) => {
+          const name = (cp?.category?.category_name || "").toLowerCase();
+          return name && set.has(name);
+        })
       );
     }
 
@@ -97,25 +96,23 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // ---- only student involved (หากมี person_type ให้ join person.person_type แล้วกรอง) ----
+    // ---- only student involved (optional) ----
     if (onlyStudent) {
-      // ใน schema นี้ table person มี person_type แต่เราไม่ได้ select มา
-      // ถ้าต้องใช้จริง ให้แก้ select publication_person(person:person(full_name,person_type))
-      // แล้วเปิดคอมเมนต์ด้านล่าง:
-      // rows = rows.filter(r =>
-      //   (r.publication_person ?? []).some(pp => (pp.person as any)?.person_type?.toUpperCase() === "STUDENT")
-      // );
+      // ถ้าจะใช้จริงให้เพิ่ม person_type ใน select แล้วกรองตรงนี้
     }
 
-    // ---- รูปแบบ items สำหรับ UI ----
+    // ---- รูปแบบ items สำหรับ UI (ไม่กรองสถานะ) ----
     const itemsAll = rows.map((r) => ({
       pub_id: r.pub_id,
       pub_name: r.pub_name,
       year: r.year,
-      type: r.venue?.type ?? null, // ใช้จาก venue.type
+      type: r.venue?.type ?? null,
       level: r.level,
       updated_at: r.updated_at,
       has_pdf: r.has_pdf,
+      status: r.status ?? null,         // ← ส่งสถานะไปด้วย
+      link_url: r.link_url ?? null,     // ← ส่งลิงก์ไปด้วย
+      file_path: r.file_path ?? null,   // ← ส่ง path ไปด้วย
       authors: (r.publication_person ?? [])
         .map((pp) => pp.person?.full_name)
         .filter(Boolean) as string[],
@@ -124,7 +121,7 @@ export async function GET(req: NextRequest) {
         .filter(Boolean) as string[],
     }));
 
-    // ---- Facets: นับหมวดหมู่เฉพาะที่ “มีงานในผลลัพธ์หลังกรองแล้ว” ----
+    // ---- Facets: นับหมวดหมู่หลังกรอง ----
     const facMap = new Map<string, number>();
     for (const r of itemsAll) {
       for (const c of r.categories) {

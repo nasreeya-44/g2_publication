@@ -49,6 +49,10 @@ export default function StaffReportsPage() {
   const [author, setAuthor] = useState<string>("");
   const [onlyStudentInvolved, setOnlyStudentInvolved] = useState(false);
 
+  // 👇 ตัวกรองใหม่
+  const [ptype, setPtype] = useState<"" | "JOURNAL" | "CONFERENCE" | "BOOK">("");
+  const [catsText, setCatsText] = useState<string>(""); // ใส่ Category หลายอันคั่นด้วย , (ชื่อ category_name)
+
   // data
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState<Totals | null>(null);
@@ -68,8 +72,17 @@ export default function StaffReportsPage() {
     if (hasPdf !== "any") p.set("has_pdf", hasPdf);
     if (author.trim()) p.set("author", author.trim());
     if (onlyStudentInvolved) p.set("only_student", "1");
+
+    // แนบพารามิเตอร์ใหม่
+    if (ptype) p.set("type", ptype);
+    catsText
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .forEach((c) => p.append("cat", c));
+
     return p;
-  }, [fromY, toY, levels, statuses, hasPdf, author, onlyStudentInvolved]);
+  }, [fromY, toY, levels, statuses, hasPdf, author, onlyStudentInvolved, ptype, catsText]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,6 +181,38 @@ export default function StaffReportsPage() {
               </div>
             </div>
 
+            {/* แถวใหม่: ประเภท + หมวดหมู่ */}
+            <div className="mt-3 grid gap-3 md:grid-cols-5">
+              {/* ประเภท */}
+              <div>
+                <div className="text-xs text-gray-500 mb-1">ประเภท</div>
+                <select
+                  value={ptype}
+                  onChange={(e) => setPtype(e.target.value as any)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                >
+                  <option value="">ทั้งหมด</option>
+                  <option value="JOURNAL">JOURNAL</option>
+                  <option value="CONFERENCE">CONFERENCE</option>
+                  <option value="BOOK">BOOK</option>
+                </select>
+              </div>
+
+              {/* หมวดหมู่ */}
+              <div className="md:col-span-2">
+                <div className="text-xs text-gray-500 mb-1">หมวดหมู่ (คั่นด้วย ,)</div>
+                <input
+                  value={catsText}
+                  onChange={(e) => setCatsText(e.target.value)}
+                  placeholder="เช่น Data Science, Software Engineering"
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                />
+                <div className="text-[11px] text-gray-400 mt-1">
+                  ระบบจะดึงผลงานที่อยู่ใน “อย่างน้อยหนึ่ง” ของหมวดหมู่ที่ระบุ
+                </div>
+              </div>
+            </div>
+
             <div className="mt-3 grid gap-3 md:grid-cols-5">
               {/* ผู้แต่ง */}
               <div className="col-span-2">
@@ -221,6 +266,8 @@ export default function StaffReportsPage() {
                     setHasPdf("any");
                     setAuthor("");
                     setOnlyStudentInvolved(false);
+                    setPtype("");
+                    setCatsText("");
                     setFromY(thisYear - 2);
                     setToY(thisYear);
                   }}
@@ -302,7 +349,7 @@ export default function StaffReportsPage() {
             </Card>
           </div>
 
-          {/* Export (ลิงก์ดาวน์โหลดจริง พร้อมตั้งชื่อไฟล์) */}
+          {/* Export */}
           <Card className="p-4">
             <div className="text-sm font-semibold text-slate-900 mb-2">ส่งออก</div>
             <div className="grid md:grid-cols-3 gap-3 items-center">
@@ -312,13 +359,6 @@ export default function StaffReportsPage() {
                 onChange={(e) => setFileName(e.target.value)}
               />
               <div className="flex gap-2">
-                <a
-                  href={hrefPDF}
-                  download={`${fileName || "publication-report"}.pdf`}
-                  className="rounded-lg px-4 py-2 text-sm bg-gray-100 border hover:bg-gray-200 inline-flex items-center justify-center"
-                >
-                  PDF
-                </a>
                 <a
                   href={hrefXLSX}
                   download={`${fileName || "publication-report"}.xlsx`}
@@ -334,16 +374,8 @@ export default function StaffReportsPage() {
                   CSV (UTF-8)
                 </a>
               </div>
-              <div className="flex md:justify-end">
-                {/* ปุ่มหลักให้ดาวน์โหลด PDF เป็นค่าเริ่มต้น (เปลี่ยนเป็น XLSX/CSV ได้ตามต้องการ) */}
-                <a
-                  href={hrefPDF}
-                  download={`${fileName || "publication-report"}.pdf`}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 inline-flex items-center justify-center"
-                >
-                  ดาวน์โหลดไฟล์
-                </a>
-              </div>
+              // ตัวอย่างปุ่มบนหน้า /staff/reports (หรือที่ไหนก็ได้)
+
             </div>
             <div className="mt-2 text-xs text-gray-500">
               * ลิงก์จะยิงไปยัง <code>/api/staff/reports/export.*</code> พร้อม query ปัจจุบันโดยอัตโนมัติ

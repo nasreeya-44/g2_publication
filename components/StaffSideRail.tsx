@@ -65,7 +65,7 @@ const items: Item[] = [
   { href: "/staff/dashboard",         title: "home",                   icon: IconHome },
   { href: "/staff/categories",        title: "จัดการหมวดหมู่",            icon: IconCategoryAdd },
   { href: "/staff/search",            title: "ค้นหางานตีพิมพ์",            icon: IconSearch },
-  { href: "/staff/pro",               title: "จัดการข้อมูลส่วนตัว",         icon: IconUser },      // ใช้รูปคนตามภาพ
+  { href: "/staff/pro",               title: "ดูข้อมูลอาจารย์",         icon: IconUser },      // ใช้รูปคนตามภาพ
   { href: "/staff/reviews",            title: "จัดการตรวจสอบงานตีพิมพ์",    icon: IconReview },
   { href: "/staff/history",           title: "ประวัตการแก้ไขผลงาน",      icon: IconClock },
   { href: "/staff/reports",           title: "จัดทำรายงาน",             icon: IconBook },

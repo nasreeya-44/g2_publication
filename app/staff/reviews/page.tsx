@@ -105,9 +105,7 @@ export default function StaffReviewListPage() {
           {/* ตาราง */}
           <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
             <div className="grid grid-cols-12 bg-gray-50 text-xs text-gray-500 px-4 py-2 border-b">
-              <div className="col-span-5">ชื่อเรื่อง</div>
-              <div className="col-span-2">ประเภท/ระดับ</div>
-              <div className="col-span-2">เจ้าของงาน</div>
+              <div className="col-span-9">ชื่อเรื่อง</div>
               <div className="col-span-2">อัปเดตล่าสุด</div>
               <div className="col-span-1 text-right">เปิดดู</div>
             </div>
@@ -125,7 +123,7 @@ export default function StaffReviewListPage() {
                   }`}
                 >
                   {/* ชื่อเรื่อง + venue + badge (ย้าย badge มาไว้ใต้ชื่อเรื่อง) */}
-                  <div className="col-span-5">
+                  <div className="col-span-9">
                     <div className="font-medium text-gray-800 line-clamp-1">{r.title}</div>
                     <div className="text-xs text-gray-500">{r.venue || "-"}</div>
                     <div className="mt-1">
@@ -133,13 +131,6 @@ export default function StaffReviewListPage() {
                     </div>
                   </div>
 
-                  <div className="col-span-2 text-xs text-gray-700">
-                    {r.type} • {r.level} {r.year ? `• ${r.year}` : ""}
-                  </div>
-
-                  <div className="col-span-2 text-xs text-gray-600">
-                    {r.owner_name || "-"}
-                  </div>
 
                   <div className="col-span-2 text-xs text-gray-600">
                     {r.updated_at ? new Date(r.updated_at).toLocaleDateString("th-TH") : "-"}
