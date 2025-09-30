@@ -1,227 +1,262 @@
-'use client';
+// app/staff/dashboard/page.tsx
+"use client";
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import StaffSideRail from "@/components/StaffSideRail";
 
-// --- mock side nav (เล็ก ๆ ในไฟล์นี้เลย เพื่อตัดปัญหา import) ---
-function SideNavMockInline() {
-  const items = [
-    { href: '/staff/dashboard', label: 'หน้าหลัก', icon: '🏠' },
-    { href: '/staff/publications/new', label: 'เพิ่มผลงาน', icon: '➕' },
-    { href: '/staff/search', label: 'ค้นหา', icon: '🔎' },
-    { href: '/staff/profile', label: 'โปรไฟล์', icon: '👤' },
-    { href: '/staff/filters', label: 'ตัวกรอง', icon: '🧰' },
-    { href: '/staff/history', label: 'ประวัติ', icon: '⏱️' },
-    { href: '/staff/library', label: 'คลัง', icon: '📚' },
-    { href: '/staff/files', label: 'ไฟล์', icon: '🗂️' },
-  ];
+/* ---------- types ---------- */
+type Totals = {
+  all: number;
+  published: number;
+  under_review: number;
+  needs_revision: number;
+  with_students: number;
+};
+type YearPoint = { year: number; count: number };
+type TopAuthor = { name: string; published: number; under_review: number; total: number };
+type DashboardResponse = {
+  ok: boolean;
+  data: {
+    totals: Totals;
+    byYear: YearPoint[];
+    topAuthors: TopAuthor[];
+    totalProfessors: number;
+  };
+};
+
+/* ---------- UI helpers ---------- */
+function Card({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <aside className="fixed left-4 top-24 z-10">
-      <div className="flex flex-col gap-3">
-        {items.map((it) => (
-          <Link
-            key={it.href}
-            href={it.href}
-            title={it.label}
-            className="w-10 h-10 rounded-full border flex items-center justify-center bg-white shadow-sm hover:bg-slate-50"
-          >
-            <span className="text-[18px]" aria-hidden>{it.icon}</span>
-          </Link>
-        ))}
-      </div>
-    </aside>
+    <div className={`bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 ${className}`}>
+      {children}
+    </div>
   );
 }
 
-// --- types ---
-type Row = {
-  pub_id: number;
-  title?: string | null;
-  type?: string | null;   // JOURNAL/CONFERENCE/BOOK
-  rank?: string | null;   // NATIONAL/INTERNATIONAL
-  year?: number | null;
-  status?: string | null; // draft/under_review/published/archived
-  venue_name?: string | null;
-};
-
-type Counters = {
-  total: number;
-  draft: number;
-  under_review: number;
-  published: number;
-  archived: number;
-};
-
-const PAGE_SIZE = 20;
-
-function StatusPill({ value }: { value?: string | null }) {
-  const v = (value || '').toLowerCase();
-  const base = 'text-xs px-3 py-1 rounded-full inline-block select-none';
-  if (v === 'published') return <span className={`${base} bg-green-100 text-green-700`}>เผยแพร่แล้ว</span>;
-  if (v === 'under_review') return <span className={`${base} bg-amber-100 text-amber-700`}>อยู่ระหว่างตรวจสอบ</span>;
-  if (v === 'archived') return <span className={`${base} bg-gray-200 text-gray-700`}>เก็บถาวร</span>;
-  return <span className={`${base} bg-rose-100 text-rose-700`}>แบบร่าง</span>;
+function Kpi({
+  label,
+  value,
+  icon,
+  tone = "slate",
+}: {
+  label: string;
+  value: number | string;
+  icon?: React.ReactNode;
+  tone?: "slate" | "green" | "amber" | "rose" | "blue";
+}) {
+  const toneMap: Record<string, string> = {
+    slate: "bg-slate-50 text-slate-600",
+    green: "bg-emerald-50 text-emerald-600",
+    amber: "bg-amber-50 text-amber-600",
+    rose: "bg-rose-50 text-rose-600",
+    blue: "bg-blue-50 text-blue-600",
+  };
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between">
+        <div className="text-[13px] text-gray-500">{label}</div>
+        {icon ? <div className={`p-1.5 rounded-lg ${toneMap[tone]}`}>{icon}</div> : null}
+      </div>
+      <div className="mt-2 text-3xl font-semibold text-slate-900">{value}</div>
+    </Card>
+  );
 }
 
 export default function StaffDashboardPage() {
-  // filters
-  const [yearFrom, setYearFrom] = useState('2019');
-  const [yearTo, setYearTo] = useState('2025');
-  const [type, setType] = useState('JOURNAL / CONFERENCE'); // รวมสองค่า ตามภาพ
-  const [rank, setRank] = useState('INTERNATIONAL');
-  const [q, setQ] = useState('');
+  const thisYear = new Date().getFullYear();
 
-  // data
-  const [rows, setRows] = useState<Row[]>([]);
-  const [total, setTotal] = useState(0);
-  const [counters, setCounters] = useState<Counters | null>(null);
+  // ตัวกรองสั้น ๆ ด้านบนแดชบอร์ด (เลือกช่วงปี)
+  const [fromY, setFromY] = useState(thisYear - 4);
+  const [toY, setToY] = useState(thisYear);
+
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
+  const [totals, setTotals] = useState<Totals | null>(null);
+  const [byYear, setByYear] = useState<YearPoint[]>([]);
+  const [topAuthors, setTopAuthors] = useState<TopAuthor[]>([]);
+  const [totalProfessors, setTotalProfessors] = useState(0);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const fromIdx = total ? (page - 1) * PAGE_SIZE + 1 : 0;
-  const toIdx = Math.min(page * PAGE_SIZE, total);
+  const query = useMemo(() => {
+    const p = new URLSearchParams();
+    p.set("year_from", String(fromY));
+    p.set("year_to", String(toY));
+    // สามารถเติมตัวกรองเพิ่มได้ถ้าต้องการ เช่น p.append("status","published")
+    return p.toString();
+  }, [fromY, toY]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams();
-      if (q) p.set('q', q);
-      if (type === 'JOURNAL' || type === 'CONFERENCE' || type === 'BOOK') p.set('type', type);
-      if (rank) p.set('rank', rank);
-      if (yearFrom) p.set('yearFrom', yearFrom);
-      if (yearTo) p.set('yearTo', yearTo);
-      p.set('page', String(page));
-      p.set('pageSize', String(PAGE_SIZE));
-      const res = await fetch('/api/staff/publications?' + p.toString(), { cache: 'no-store' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'fetch failed');
-      setRows(json.data || []);
-      setTotal(json.total || 0);
-      setCounters(json.counters || null);
+      const res = await fetch(`/api/staff/dashboard?${query}`, { cache: "no-store" });
+      const j: DashboardResponse = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j as any);
+      setTotals(j.data.totals);
+      setByYear(j.data.byYear);
+      setTopAuthors(j.data.topAuthors);
+      setTotalProfessors(j.data.totalProfessors);
     } catch (e: any) {
-      console.error('load staff publications:', e?.message || e);
-      setRows([]); setTotal(0); setCounters(null);
+      alert(e?.message || "โหลดแดชบอร์ดไม่สำเร็จ");
     } finally {
       setLoading(false);
     }
-  }
+  }, [query]);
 
-  useEffect(() => { load(); /* eslint-disable-line */ }, [page]);
+  useEffect(() => { load(); }, [load]);
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setPage(1);
-    load();
-  }
+  const maxCount = useMemo(() => Math.max(1, ...byYear.map((x) => x.count)), [byYear]);
 
   return (
-    <div className="min-h-screen bg-gray-50 relative">
-      <SideNavMockInline />
-      <div className="flex items-center justify-end px-6 py-3 text-sm text-gray-600">
-        ผู้ใช้: <span className="font-semibold ml-1">somchai</span> (<span className="uppercase">STAFF</span>)
-      </div>
-
-      <main className="px-6 pb-10 max-w-6xl mx-auto">
-        <h1 className="text-sm font-semibold mb-4">รายการผลงานตีพิมพ์</h1>
-
-        {/* Filters */}
-        <form onSubmit={submit} className="bg-white rounded-xl shadow p-4 mb-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-12 sm:col-span-2">
+    <div className="min-h-screen bg-[#F6F9FC]">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 relative">
+        <StaffSideRail />
+        <main className="md:ml-[80px] space-y-5">
+          {/* Header + filters */}
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 className="text-xl font-semibold text-slate-900">
+                <span className="font-medium text-slate-700">Staff / Dashboard</span> – ภาพรวมระบบตีพิมพ์
+              </h1>
+              <div className="text-xs text-slate-500 mt-0.5">ข้อมูลสรุป • สถิติรายปี • Top Authors</div>
+            </div>
+            <div className="flex items-end gap-2">
               <div className="text-xs text-gray-500 mb-1">ช่วงปี</div>
-              <input value={yearFrom} onChange={e=>setYearFrom(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
-            </div>
-            <div className="col-span-12 sm:col-span-2">
-              <div className="text-xs text-gray-500 mb-1 invisible sm:visible">.</div>
-              <input value={yearTo} onChange={e=>setYearTo(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
-            </div>
-            <div className="col-span-12 sm:col-span-3">
-              <div className="text-xs text-gray-500 mb-1">ประเภท</div>
-              <select value={type} onChange={e=>setType(e.target.value)} className="w-full border rounded-xl px-3 py-2">
-                <option>JOURNAL / CONFERENCE</option>
-                <option>JOURNAL</option>
-                <option>CONFERENCE</option>
-                <option>BOOK</option>
-              </select>
-            </div>
-            <div className="col-span-12 sm:col-span-3">
-              <div className="text-xs text-gray-500 mb-1">ระดับ</div>
-              <select value={rank} onChange={e=>setRank(e.target.value)} className="w-full border rounded-xl px-3 py-2">
-                <option>INTERNATIONAL</option>
-                <option>NATIONAL</option>
-              </select>
-            </div>
-            <div className="col-span-12 sm:col-span-2">
-              <div className="text-xs text-gray-500 mb-1">คำค้นหา</div>
-              <input value={q} onChange={e=>setQ(e.target.value)} placeholder="keyword, author..." className="w-full border rounded-xl px-3 py-2" />
-            </div>
-            <div className="col-span-12 sm:col-span-2 sm:justify-end flex">
-              <button type="submit" className="w-full sm:w-auto px-5 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700">ค้นหา</button>
-            </div>
-          </div>
-        </form>
-
-        {/* Counters */}
-        <div className="bg-white rounded-xl shadow p-4 mb-4">
-          <div className="flex flex-wrap gap-3 text-sm">
-            <span className="px-3 py-2 rounded-xl bg-gray-100">ทั้งหมด : {counters?.total ?? 0}</span>
-            <span className="px-3 py-2 rounded-xl bg-rose-100 text-rose-700">แบบร่าง : {counters?.draft ?? 0}</span>
-            <span className="px-3 py-2 rounded-xl bg-amber-100 text-amber-700">อยู่ระหว่างตรวจสอบ : {counters?.under_review ?? 0}</span>
-            <span className="px-3 py-2 rounded-xl bg-green-100 text-green-700">เผยแพร่แล้ว : {counters?.published ?? 0}</span>
-            <span className="px-3 py-2 rounded-xl bg-gray-200 text-gray-700">เก็บถาวร : {counters?.archived ?? 0}</span>
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="bg-white rounded-xl shadow">
-          <div className="px-4 py-2 text-sm text-gray-500 grid grid-cols-12">
-            <div className="col-span-6">ชื่อ</div>
-            <div className="col-span-2">ประเภท</div>
-            <div className="col-span-1">ระดับ</div>
-            <div className="col-span-1">ปี</div>
-            <div className="col-span-1">สถานะ</div>
-            <div className="col-span-1 text-right">จัดการ</div>
-          </div>
-
-          {loading ? (
-            <div className="p-6 text-center text-gray-500">กำลังโหลด...</div>
-          ) : rows.length === 0 ? (
-            <div className="p-6 text-center text-gray-500">ไม่พบผลลัพธ์</div>
-          ) : (
-            <div className="divide-y">
-              {rows.map((r) => (
-                <div key={r.pub_id} className="px-4 py-3 grid grid-cols-12 items-center">
-                  <div className="col-span-6">
-                    <div className="font-medium">{r.title || r.venue_name || `(รายการ #${r.pub_id})`}</div>
-                    <div className="text-xs text-gray-500">{r.venue_name ?? ''}</div>
-                  </div>
-                  <div className="col-span-2 text-sm">{r.type ?? '-'}</div>
-                  <div className="col-span-1 text-sm">{r.rank ?? '-'}</div>
-                  <div className="col-span-1 text-sm">{r.year ?? '-'}</div>
-                  <div className="col-span-1"><StatusPill value={r.status} /></div>
-                  <div className="col-span-1 flex justify-end gap-2">
-                    <Link href={`/staff/publications/${r.pub_id}/edit`} className="px-3 py-1.5 rounded-lg bg-gray-100 text-sm">แก้ไข</Link>
-                    <Link href={`/staff/publications/${r.pub_id}`} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm">ดู</Link>
-
-                  </div>
-                </div>
-              ))}
-
-              <div className="px-4 py-3 flex items-center justify-between text-sm text-gray-600">
-                <div>แสดง {total ? `${fromIdx}-${toIdx}` : 0} จาก {total} รายการ</div>
-                <div className="flex items-center gap-2">
-                  <button className="px-3 py-1 rounded-lg border" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>ก่อนหน้า</button>
-                  <div>หน้า {page}/{totalPages}</div>
-                  <button className="px-3 py-1 rounded-lg border" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>หน้าถัดไป</button>
-                </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  className="rounded-lg border px-3 py-2 text-sm"
+                  value={fromY}
+                  onChange={(e) => setFromY(Number(e.target.value || thisYear))}
+                />
+                <span className="text-sm text-gray-500">–</span>
+                <input
+                  type="number"
+                  className="rounded-lg border px-3 py-2 text-sm"
+                  value={toY}
+                  onChange={(e) => setToY(Number(e.target.value || thisYear))}
+                />
+                <button
+                  onClick={load}
+                  disabled={loading}
+                  className="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700"
+                >
+                  {loading ? "กำลังโหลด…" : "อัปเดตข้อมูล"}
+                </button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
 
-        <div className="text-right mt-2 text-xs text-gray-500">หน้าถัดไป ►</div>
-      </main>
+          {/* KPIs */}
+          <div className="grid md:grid-cols-4 gap-4">
+            <Kpi
+              label="รอตรวจสอบ (Under Review)"
+              value={totals?.under_review ?? 0}
+              tone="amber"
+              icon={<span>⏳</span>}
+            />
+            <Kpi
+              label="ผ่านการอนุมัติแล้ว (Published)"
+              value={totals?.published ?? 0}
+              tone="green"
+              icon={<span>✔️</span>}
+            />
+            <Kpi
+              label="ต้องแก้ไข (Needs Revision)"
+              value={totals?.needs_revision ?? 0}
+              tone="rose"
+              icon={<span>⚠️</span>}
+            />
+            <Kpi
+              label="จำนวนอาจารย์ทั้งหมด"
+              value={totalProfessors}
+              tone="blue"
+              icon={<span>👤</span>}
+            />
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-12">
+            {/* Chart */}
+            <Card className="md:col-span-7 p-5">
+              <div className="text-sm font-semibold text-slate-900">กราฟแนวโน้มงานตีพิมพ์รายปี</div>
+              <div className="text-[11px] text-gray-400">จำนวนงาน/ปี</div>
+
+              {byYear.length === 0 ? (
+                <div className="p-8 text-sm text-gray-500">ไม่มีข้อมูล</div>
+              ) : (
+                <div className="h-64 flex items-end gap-6 px-2 mt-4">
+                  {byYear.map((pt) => (
+                    <div key={pt.year} className="flex-1 flex flex-col items-center">
+                      <div
+                        className="w-10 bg-blue-500/80 rounded-t"
+                        style={{ height: `${(pt.count / maxCount) * 220 + 10}px` }}
+                        title={`${pt.year}: ${pt.count}`}
+                      />
+                      <div className="text-xs text-gray-600 mt-2">{pt.year}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-3 text-[11px] text-gray-400">
+                * แสดงผลจากเงื่อนไขช่วงปีที่เลือกด้านบน
+              </div>
+            </Card>
+
+            {/* Top Authors */}
+            <Card className="md:col-span-5 p-5">
+              <div className="text-sm font-semibold text-slate-900">Top Authors / Active Staff (รวมปี)</div>
+              <div className="text-[11px] text-gray-400">เรียงตามจำนวนผลงานทั้งหมด</div>
+
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-500">
+                      <th className="px-3 py-2 text-left">ชื่อผู้แต่ง</th>
+                      <th className="px-3 py-2 text-right">Published</th>
+                      <th className="px-3 py-2 text-right">Under_review</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topAuthors.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-500">
+                          ไม่มีข้อมูล
+                        </td>
+                      </tr>
+                    ) : (
+                      topAuthors.map((a, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-3 py-2">{a.name}</td>
+                          <td className="px-3 py-2 text-right text-emerald-600">{a.published}</td>
+                          <td className="px-3 py-2 text-right text-amber-600">{a.under_review}</td>
+                          <td className="px-3 py-2 text-right font-medium">{a.total}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-4 flex items-center gap-4 text-xs">
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> Approved
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500" /> Pending
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-slate-400" /> Total
+                </span>
+              </div>
+            </Card>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
