@@ -37,6 +37,20 @@ function useDebounced<T>(value: T, delay = 300) {
   return v;
 }
 
+/* ---------- helpers: export filename ---------- */
+function nowStamp() {
+  const d = new Date();
+  const pad = (n:number)=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+function defaultFilenameBase() {
+  return `publications-report_${nowStamp()}`;
+}
+function sanitizeFilenameBase(name: string) {
+  const base = name.trim().replace(/[\\/:*?"<>|]+/g, '_');
+  return base || defaultFilenameBase();
+}
+
 export default function ProfessorDashboard() {
   const thisYear = new Date().getFullYear();
 
@@ -183,7 +197,7 @@ export default function ProfessorDashboard() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  // ===== Main list fetch (with AbortController) =====
+  // ===== Main list fetch =====
   const ctrlRef = useRef<AbortController | null>(null);
 
   function toggleValue<T extends string>(list: T[], v: T, set: (x: T[]) => void) {
@@ -300,128 +314,107 @@ export default function ProfessorDashboard() {
   const pageEnd = Math.min(page * pageSize, total);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
-  // ===== รายงาน: พรีวิว + ดาวน์โหลด PDF (อิงเงื่อนไขเดียวกับฟอร์ม) =====
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportRows, setReportRows] = useState<any[]>([]);
-  const [reportErr, setReportErr] = useState<string | null>(null);
-
-  // params สำหรับรายงาน — ใช้ฟิลเตอร์เหมือนหน้าจอ แต่ "ไม่ใส่ page/pageSize" เพื่อดึงทั้งหมดตามเงื่อนไข
+  // ===== params สำหรับรายงาน (ใช้เงื่อนไขเดียวกับหน้าจอ) =====
   const reportParams = useMemo(() => {
     const p = new URLSearchParams();
-
-    // ยึดตามหน้าจัดการ (ของตนเอง + หัวหน้า)
     p.set('mine', '1');
     p.set('leaderOnly', '1');
-
     if (dq.trim().length >= 2) p.set('q', dq.trim());
     if (dAuthor.trim().length >= 2) p.set('author', dAuthor.trim());
-
-    const cats = dCats.split(',').map(s => s.trim()).filter(Boolean);
-    cats.forEach(c => p.append('cat', c));
-
+    dCats.split(',').map(s => s.trim()).filter(Boolean).forEach(c => p.append('cat', c));
     if (ptype) p.set('type', ptype);
     p.set('yearFrom', String(yearFrom));
     p.set('yearTo', String(yearTo));
-
     if (hasPdf === 'true') p.set('hasPdf', '1');
     if (hasPdf === 'false') p.set('hasPdf', '0');
-
     levels.forEach(lv => p.append('level', lv));
     statuses.forEach(st => p.append('status', st));
-
     return p;
   }, [dq, dAuthor, dCats, ptype, yearFrom, yearTo, hasPdf, levels, statuses]);
 
-  // --- พรีวิวรายงาน: บังคับให้แบ็กเอนด์ส่ง JSON (ถ้ารองรับ format=json) มิฉะนั้นตรวจ content-type ---
-  async function openPreview() {
-    setReportOpen(true);
-    setReportLoading(true);
-    setReportErr(null);
+  // ===== Modal: กรอกชื่อไฟล์ก่อนดาวน์โหลด =====
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf'|'xlsx'>('pdf');
+  const [exportName, setExportName] = useState<string>(defaultFilenameBase());
+  const exportInputRef = useRef<HTMLInputElement|null>(null);
+
+  function openExport(format: 'pdf'|'xlsx') {
+    setExportFormat(format);
+    setExportName(defaultFilenameBase());
+    setExportOpen(true);
+    setTimeout(() => exportInputRef.current?.focus(), 50);
+  }
+
+  async function confirmExport() {
+    const base = sanitizeFilenameBase(exportName || '');
+    await doExport(exportFormat, base);
+    setExportOpen(false);
+  }
+
+  // --- ดาวน์โหลด PDF/XLSX ---
+  async function doExport(format: 'pdf' | 'xlsx', filenameBase: string) {
     try {
       const p = new URLSearchParams(reportParams);
-      // ถ้าแบ็กเอนด์รองรับ format=json ให้บังคับไว้เพื่อกันพลาด
-      p.set('format', 'json');
+      p.set('format', format);
+      p.set('filename', filenameBase);
 
       const res = await fetch(`/api/professor/publications/report?${p.toString()}`, { cache: 'no-store' });
 
       if (!res.ok) {
-        // พยายามอ่านข้อความผิดพลาดแบบปลอดภัย
-        const txt = await res.text();
-        try {
-          const j = JSON.parse(txt);
-          throw new Error(j?.message || 'load preview failed');
-        } catch {
-          throw new Error(txt || 'load preview failed');
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (
+          ct.includes('application/pdf') ||
+          ct.includes('application/vnd.openxmlformats-officedocument') ||
+          ct.includes('application/octet-stream')
+        ) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const filename = filenameBase + (format === 'xlsx' ? '.xlsx' : '.pdf');
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10_000);
+          return;
         }
-      }
-
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('application/pdf')) {
-        // เซิร์ฟเวอร์ส่ง PDF มาแทน -> เปิดดูในแท็บ
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
-        setReportRows([]);
-        setReportErr(null);
-      } else if (ct.includes('application/json')) {
-        const json = await res.json();
-        setReportRows(Array.isArray(json?.data) ? json.data : []);
-      } else {
-        // ฟอร์แมตอื่น ๆ -> ลองเปิดแท็บใหม่
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
-      }
-    } catch (e: any) {
-      console.error('report preview error:', e);
-      setReportRows([]);
-      setReportErr(e?.message || 'failed');
-    } finally {
-      setReportLoading(false);
-    }
-  }
-
-  // --- ดาวน์โหลด PDF: อ่านเป็น blob เสมอ ไม่ parse JSON ---
-  async function downloadPdf() {
-    try {
-      const p = new URLSearchParams(reportParams);
-      p.set('format', 'pdf');
-
-      const res = await fetch(`/api/professor/publications/report?${p.toString()}`, {
-        cache: 'no-store',
-      });
-
-      if (!res.ok) {
         const txt = await res.text();
         try {
           const j = JSON.parse(txt);
-          throw new Error(j?.message || 'download failed');
+          throw new Error(j?.message || 'export failed');
         } catch {
-          throw new Error(txt || 'download failed');
+          throw new Error(txt || `export failed (HTTP ${res.status})`);
         }
       }
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      const filename = filenameBase + (format === 'xlsx' ? '.xlsx' : '.pdf');
 
-      // พยายามให้เปิดในแท็บใหม่ก่อน (บางเบราว์เซอร์จะพรีวิว PDF ได้)
-      const w = window.open(url, '_blank');
-      if (!w || w.closed || typeof w.closed === 'undefined') {
-        // ถ้า pop-up ถูกบล็อก ให้ fallback เป็นดาวน์โหลดไฟล์
+      if (format === 'pdf') {
+        const w = window.open(url, '_blank', 'noopener,noreferrer');
+        if (!w || w.closed || typeof w.closed === 'undefined') {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }
+      } else {
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'publication-report.pdf';
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
       }
 
-      // cleanup
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (e: any) {
-      console.error('download report error:', e);
-      alert(e?.message || 'download failed');
+    } catch (e:any) {
+      console.error('export error:', e);
+      alert(e?.message || 'export failed');
     }
   }
 
@@ -580,19 +573,20 @@ export default function ProfessorDashboard() {
               ล้างตัวกรอง
             </button>
 
-            {/* ===== ปุ่มรายงาน ===== */}
+            {/* ===== ปุ่มรายงาน (ไม่มีพรีวิว) ===== */}
             <button
-              onClick={openPreview}
-              className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700"
-            >
-              พรีวิวรายงาน
-            </button>
-            <button
-              onClick={downloadPdf}
+              onClick={() => openExport('pdf')}
               className="px-3 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700"
               title="ออกรายงานเป็น PDF"
             >
-              ดาวน์โหลด PDF
+              ออกรายงาน PDF
+            </button>
+            <button
+              onClick={() => openExport('xlsx')}
+              className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+              title="ออกรายงานเป็น Excel"
+            >
+              ออกรายงาน Excel
             </button>
 
             <Link
@@ -713,59 +707,35 @@ export default function ProfessorDashboard() {
         <PaginationFooter total={total} page={page} pageSize={pageSize} onPageChange={setPage} />
       </div>
 
-      {/* ===== Modal พรีวิวรายงาน ===== */}
-      {reportOpen && (
-        <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center p-3">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+      {/* ===== Modal: ตั้งชื่อไฟล์ก่อนดาวน์โหลด ===== */}
+      {exportOpen && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-3">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden">
             <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="font-semibold">พรีวิวรายงาน (อิงเงื่อนไขจากฟอร์มค้นหา)</div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={downloadPdf}
-                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
-                >
-                  ดาวน์โหลด PDF
-                </button>
-                <button
-                  onClick={()=>setReportOpen(false)}
-                  className="px-3 py-1.5 rounded-lg border text-sm"
-                >
-                  ปิด
-                </button>
+              <div className="font-semibold">ตั้งชื่อไฟล์สำหรับดาวน์โหลด</div>
+              <span className="text-xs text-gray-500 uppercase">{exportFormat === 'pdf' ? 'PDF' : 'Excel'}</span>
+            </div>
+            <div className="p-4 space-y-3">
+              <label className="text-xs text-gray-500">ชื่อไฟล์ (ไม่ต้องใส่นามสกุล)</label>
+              <input
+                ref={exportInputRef}
+                value={exportName}
+                onChange={(e)=>setExportName(e.target.value)}
+                className="w-full border rounded-xl px-3 py-2"
+                placeholder={defaultFilenameBase()}
+                onKeyDown={(e)=>{ if(e.key==='Enter') confirmExport(); }}
+              />
+              <div className="text-[11px] text-gray-500">
+                ระบบจะเติมนามสกุลให้เอง: {exportFormat === 'pdf' ? '.pdf' : '.xlsx'}
               </div>
             </div>
-
-            <div className="p-3 overflow-auto">
-              {reportLoading ? (
-                <div className="text-sm text-gray-600">กำลังโหลด...</div>
-              ) : reportErr ? (
-                <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
-                  {reportErr}
-                </div>
-              ) : reportRows.length === 0 ? (
-                <div className="text-sm text-gray-600">ไม่พบข้อมูลตามเงื่อนไข</div>
-              ) : (
-                <ol className="space-y-4 list-decimal pl-5">
-                  {reportRows.map((r:any) => (
-                    <li key={r.pub_id}>
-                      <div className="font-medium">{r.pub_name || r.venue_name || '(ไม่มีชื่อเรื่อง)'}</div>
-                      {r.venue_name && r.venue_name !== r.pub_name && (
-                        <div className="text-sm text-gray-600">Venue: {r.venue_name}</div>
-                      )}
-                      <div className="text-sm text-gray-600">
-                        ระดับ: {r.level || '-'} · ปี: {r.year ?? '-'} · สถานะ: {r.status || '-'}
-                      </div>
-                      {Array.isArray(r.authors) && r.authors.length > 0 && (
-                        <div className="text-sm">ผู้แต่ง: {r.authors.join(', ')}</div>
-                      )}
-                      {Array.isArray(r.categories) && r.categories.length > 0 && (
-                        <div className="text-sm">หมวดหมู่: {r.categories.join(', ')}</div>
-                      )}
-                      {r.link_url && <div className="text-sm">ลิงก์: {r.link_url}</div>}
-                    </li>
-                  ))}
-                </ol>
-              )}
+            <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+              <button onClick={()=>setExportOpen(false)} className="px-3 py-2 rounded-lg border text-sm">
+                ยกเลิก
+              </button>
+              <button onClick={confirmExport} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700">
+                ดาวน์โหลด
+              </button>
             </div>
           </div>
         </div>
