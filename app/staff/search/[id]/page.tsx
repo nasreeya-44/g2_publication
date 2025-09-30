@@ -20,7 +20,7 @@ type Detail = {
   level: string | null;
   year: number | null;
   has_pdf: boolean | null;
-  file_path: string | null;   // อาจเป็น public URL หรือเป็น key ในบัคเก็ต
+  file_path: string | null;   // key ในบักเก็ต หรือเป็น URL ตรง (ถ้า API อยากส่งมาแบบนั้น)
   status: string | null;
   link_url: string | null;
   venue_name: string | null;
@@ -29,6 +29,8 @@ type Detail = {
   updated_at: string | null;
   authors: Author[];
   categories: string[];
+  // เพิ่มรองรับลิงก์ที่ API สร้างมาให้ (signed URL)
+  pdf_public_url?: string | null;
 };
 
 /* ================= Helpers ================= */
@@ -46,15 +48,13 @@ function fmtDate(s?: string | null) {
   }
 }
 
-/** สร้าง public PDF URL ให้รองรับทุกเคส:
- * - ถ้าเป็น http/https แล้ว → คืนตามเดิม
- * - ถ้ามีชื่อบัคเก็ตพ่วงมา → ตัดออกก่อน
- * - ประกอบ URL จาก SUPABASE_URL + bucket + key
+/** สร้าง public PDF URL เมื่อ file_path เป็น key ใน public bucket
+ * - ถ้าเป็น http/https อยู่แล้ว -> คืนตามเดิม
+ * - ถ้าเป็น key -> ประกอบเป็น public URL
  */
 function buildPdfUrl(filePath: string | null | undefined): string | undefined {
   if (!filePath) return undefined;
-
-  // ถ้าเป็น http/https อยู่แล้ว ใช้ได้เลย
+  // ถ้าเป็น URL ตรงอยู่แล้ว ใช้ได้เลย
   if (/^https?:\/\//i.test(filePath)) return filePath;
 
   const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '');
@@ -67,7 +67,7 @@ function buildPdfUrl(filePath: string | null | undefined): string | undefined {
   const prefix = `${bucket}/`;
   if (key.startsWith(prefix)) key = key.slice(prefix.length);
 
-  // ✅ encode ทุก segment ป้องกันช่องว่าง วงเล็บ ฯลฯ
+  // encode segment เพื่อกันช่องว่าง/วงเล็บ ฯลฯ
   const encodedKey = key
     .split('/')
     .map(seg => encodeURIComponent(seg))
@@ -101,10 +101,8 @@ export default function PublicationDetailPage() {
           throw new Error(json?.message || `load detail failed (${res.status})`);
         }
 
-        // บางโปรเจ็กต์ API ใส่ไว้ใต้ data, บางอันคืนตรง ๆ
-        const raw = (json?.data ?? json) as Partial<Detail>;
+        const raw = json.data as Partial<Detail>;
 
-        // normalize: กัน authors/categories undefined และหลอมชนิดให้ชัด
         const normalized: Detail = {
           pub_id: Number(raw.pub_id ?? 0),
           pub_name: raw.pub_name ?? null,
@@ -121,6 +119,7 @@ export default function PublicationDetailPage() {
           updated_at: raw.updated_at ?? null,
           authors: Array.isArray(raw.authors) ? (raw.authors as Author[]) : [],
           categories: Array.isArray(raw.categories) ? (raw.categories as string[]) : [],
+          pdf_public_url: raw.pdf_public_url ?? null,
         };
 
         if (isMounted) setDetail(normalized);
@@ -139,7 +138,7 @@ export default function PublicationDetailPage() {
     };
   }, [id]);
 
-  // ⛏ เปลี่ยนเฉพาะส่วนการเรนเดอร์ error: ไม่แสดง “กำลังรอการแก้ไขจาก Professor” อีกแล้ว
+  // กรณี error/not found
   if (!loading && !detail) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#0B4CB8] via-[#205FDB] to-[#3A73E6]">
@@ -170,23 +169,25 @@ export default function PublicationDetailPage() {
   const title =
     detail!.pub_name || detail!.venue_name || detail!.link_url || `Publication #${detail!.pub_id}`;
 
+  // ใช้ has_pdf || file_path || pdf_public_url เพื่อแสดง badge “มี PDF”
   const badges = [
     detail!.level ? `ระดับ: ${detail!.level}` : null,
     detail!.year ? `ปี: ${detail!.year}` : null,
     detail!.status ? `สถานะ: ${detail!.status}` : null,
     detail!.venue_type ? `ประเภท: ${detail!.venue_type}` : null,
-    detail!.file_path ? 'มี PDF' : null, // อ้างอิงจากการมีไฟล์จริง
+    (detail!.has_pdf || detail!.file_path || detail!.pdf_public_url) ? 'มี PDF' : null,
   ].filter(Boolean) as string[];
 
-  // ✅ ประกอบ PDF URL ให้พร้อมใช้ทุกเคส
-  const pdfUrl = buildPdfUrl(detail!.file_path);
+  // เลือกลิงก์ PDF ที่พร้อมใช้
+  const pdfUrl =
+    (detail!.pdf_public_url && typeof detail!.pdf_public_url === 'string' && detail!.pdf_public_url) ||
+    buildPdfUrl(detail!.file_path);
 
   return (
     <div className="min-h-screen bg-slate-50">
       {/* ======= Head Bar ======= */}
       <div className="bg-gradient-to-br from-[#0B4CB8] via-[#205FDB] to-[#3A73E6] py-6">
-        <div className="max-w-5xl mx-auto px-4 md:px-6">
-        </div>
+        <div className="max-w-5xl mx-auto px-4 md:px-6" />
       </div>
 
       {/* ======= Body ======= */}
@@ -239,10 +240,12 @@ export default function PublicationDetailPage() {
           {/* Left Column */}
           <section className="col-span-12 md:col-span-8 space-y-4">
             {/* Abstract */}
-            {detail!.abstract && (
+            {detail!.abstract !== null && detail!.abstract !== undefined && (
               <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-6 mb-4">
                 <h2 className="text-base font-semibold text-slate-900 mb-3">บทคัดย่อ</h2>
-                <p className="text-sm text-gray-700 whitespace-pre-line">{detail!.abstract}</p>
+                <p className="text-sm text-gray-700 whitespace-pre-line">
+                  {detail!.abstract?.trim() ? detail!.abstract : '—'}
+                </p>
               </div>
             )}
 
@@ -297,7 +300,7 @@ export default function PublicationDetailPage() {
         </div>
 
         <div className="text-right mt-6">
-          <Link href="/" className="text-sm text-blue-600 hover:underline">
+          <Link href="/staff/search" className="text-sm text-blue-600 hover:underline">
             ◄ กลับสู่หน้าค้นหา
           </Link>
         </div>
@@ -305,7 +308,6 @@ export default function PublicationDetailPage() {
     </div>
   );
 }
-
 
 /* ================= Small UI Components ================= */
 function Badge({ children }: { children: React.ReactNode }) {
