@@ -22,31 +22,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, message: 'invalid session' }, { status: 401 });
     }
 
-    // ดึงข้อมูลผู้ใช้ล่าสุดจาก DB
+    // ✅ ดึงข้อมูลให้ครบ: phone, position
     const { data: u, error } = await supabase
       .from('users')
-      .select('user_id, username, first_name, last_name, role, status, profile_image, email')
+      .select(
+        'user_id, username, first_name, last_name, role, status, profile_image, email, phone, position'
+      )
       .eq('user_id', user_id)
       .maybeSingle();
 
     if (error) throw error;
-    if (!u) return NextResponse.json({ ok: false, message: 'user not found' }, { status: 404 });
+    if (!u) {
+      return NextResponse.json({ ok: false, message: 'user not found' }, { status: 404 });
+    }
 
     return NextResponse.json({
       ok: true,
       data: {
         user_id: u.user_id,
-        username: u.username,
-        first_name: u.first_name,
-        last_name: u.last_name,
-        role: u.role,
-        status: u.status,
-        profile_image: u.profile_image,
+        username: u.username ?? null,
+        first_name: u.first_name ?? null,
+        last_name: u.last_name ?? null,
+        role: u.role ?? null,
+        status: u.status ?? null,
+        profile_image: u.profile_image ?? null,
         email: u.email ?? null,
+        phone: u.phone ?? null,        // ✅ ส่งออกให้ frontend
+        position: u.position ?? null,  // ✅ ส่งออกให้ frontend
       },
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, message: e?.message || 'unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, message: e?.message || 'unauthorized' },
+      { status: 401 }
+    );
   }
 }
 

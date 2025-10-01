@@ -180,6 +180,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (berr) throw berr;
     if (!before) return bad('Not found', 404);
 
+    // 🔎 ดึงหมวดหมู่เดิมสำหรับใช้เทียบและบันทึกลง history ถ้ามีการเปลี่ยน
+    const { data: beforeCps } = await supabase
+      .from('category_publication')
+      .select('category:category_id(category_name)')
+      .eq('pub_id', pubId);
+    const beforeCatNames: string[] = (beforeCps || [])
+      .map((x: any) => x.category?.category_name)
+      .filter(Boolean);
+
     const ct = req.headers.get('content-type') || '';
 
     /* ---------- multipart/form-data ---------- */
@@ -197,8 +206,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const hasStatus = statusRaw.length > 0;
 
       // ----- abstract ops -----
-      // 1) หากส่ง abstract มา -> แทนที่ทั้งข้อความ (ยอมรับค่าว่างเพื่อล้าง)
-      // 2) มิฉะนั้น ใช้ตัวแก้แบบเพิ่ม/ลบ
       let nextAbstract: string | null | undefined;
       if (fd.has('abstract')) {
         const rep = String(fd.get('abstract') ?? '');
@@ -222,7 +229,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         if (Number.isFinite(delFrom) && Number.isFinite(delTo) && delTo >= delFrom && delFrom >= 0) {
           cur = cur.slice(0, delFrom) + cur.slice(delTo);
         }
-        // ถ้าไม่มีการเปลี่ยนแปลงอะไรเลยก็ไม่ต้องส่ง abstract ใน payload
         if (cur !== String(before.abstract ?? '')) {
           nextAbstract = cur.trim() ? cur : null;
         }
@@ -335,15 +341,31 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         }
       }
 
-      // categories (comma)
-      const catsRaw = String(fd.get('categories') || '');
-      const names = catsRaw.split(',').map((s) => s.trim()).filter(Boolean);
-      if (catsRaw.length >= 0) {
+      // categories (comma) + history
+      if (fd.has('categories')) {
+        const catsRaw = String(fd.get('categories') || '');
+        const names = catsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+
         await supabase.from('category_publication').delete().eq('pub_id', pubId);
+        let newCatNames: string[] = [];
         if (names.length) {
           const map = await getExistingCategoryIdsByName(names);
           const rows = Object.values(map).map((cid) => ({ pub_id: pubId, category_id: cid }));
+          newCatNames = Object.keys(map);
           if (rows.length) await supabase.from('category_publication').insert(rows);
+        }
+
+        // compare (sorted) then log if changed
+        const oldSorted = [...beforeCatNames].sort();
+        const newSorted = [...newCatNames].sort();
+        if (JSON.stringify(oldSorted) !== JSON.stringify(newSorted)) {
+          await supabase.from('publication_edit_log').insert({
+            pub_id: pubId,
+            user_id: me.user_id,
+            field_name: 'categories',
+            old_value: JSON.stringify(oldSorted),
+            new_value: JSON.stringify(newSorted),
+          });
         }
       }
 
@@ -495,15 +517,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     }
 
-    // categories – ใช้เฉพาะที่มีอยู่
+    // categories – ใช้เฉพาะที่มีอยู่ + history
     if (Array.isArray(body?.categories) || typeof body?.categories === 'string') {
       const list: string[] = Array.isArray(body.categories)
-        ? body.categories.map((s: string) => String(s))
-        : String(body.categories).split(',').map((s) => s.trim());
-      const map = await getExistingCategoryIdsByName(list);
+        ? body.categories.map((s: string) => String(s).trim()).filter(Boolean)
+        : String(body.categories).split(',').map((s) => s.trim()).filter(Boolean);
+
       await supabase.from('category_publication').delete().eq('pub_id', pubId);
-      const rows = Object.values(map).map((cid) => ({ pub_id: pubId, category_id: cid }));
-      if (rows.length) await supabase.from('category_publication').insert(rows);
+
+      let newCatNames: string[] = [];
+      if (list.length) {
+        const map = await getExistingCategoryIdsByName(list);
+        const rows = Object.values(map).map((cid) => ({ pub_id: pubId, category_id: cid }));
+        newCatNames = Object.keys(map);
+        if (rows.length) await supabase.from('category_publication').insert(rows);
+      }
+
+      const oldSorted = [...beforeCatNames].sort();
+      const newSorted = [...newCatNames].sort();
+      if (JSON.stringify(oldSorted) !== JSON.stringify(newSorted)) {
+        await supabase.from('publication_edit_log').insert({
+          pub_id: pubId,
+          user_id: me.user_id,
+          field_name: 'categories',
+          old_value: JSON.stringify(oldSorted),
+          new_value: JSON.stringify(newSorted),
+        });
+      }
     }
 
     return NextResponse.json({ ok: true });

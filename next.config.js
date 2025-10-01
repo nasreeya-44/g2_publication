@@ -5,29 +5,38 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 let SUPABASE_HOST = '';
 try {
   if (SUPABASE_URL) {
-    SUPABASE_HOST = new URL(SUPABASE_URL).hostname; // eg. ofmjurmxhtyjejgoxwhq.supabase.co
+    // eg. ofmjurmxhtyjejgoxwhq.supabase.co
+    SUPABASE_HOST = new URL(SUPABASE_URL).hostname;
   }
-} catch (e) {
+} catch {
   // ignore invalid URL at build time
 }
+
+const remotePatterns = [];
+
+// อนุญาตรูปจาก Supabase public storage
+if (SUPABASE_HOST) {
+  remotePatterns.push({
+    protocol: 'https',
+    hostname: SUPABASE_HOST,
+    pathname: '/storage/v1/object/public/**',
+  });
+}
+
+// อนุญาตรูป avatar ชั่วคราวจาก DiceBear (เช่น https://api.dicebear.com/7.x/thumbs/svg?seed=...)
+remotePatterns.push({
+  protocol: 'https',
+  hostname: 'api.dicebear.com',
+  pathname: '/7.x/**',
+});
 
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    // ใช้ remotePatterns เพื่อจำกัดเฉพาะ path public storage
-    remotePatterns: SUPABASE_HOST
-      ? [
-          {
-            protocol: 'https',
-            hostname: SUPABASE_HOST,
-            pathname: '/storage/v1/object/public/**',
-          },
-        ]
-      : [],
-    // เผื่อกรณีคุณอยากใช้ domains แบบง่าย ๆ ก็ได้ (คอมเมนต์ทิ้งไว้)
-    // domains: SUPABASE_HOST ? [SUPABASE_HOST] : [],
+    remotePatterns,
+    // ถ้าต้องการแบบ domains อย่างง่ายก็ใช้บรรทัดล่างแทน (ไม่จำเป็นเมื่อใช้ remotePatterns แล้ว)
+    // domains: SUPABASE_HOST ? [SUPABASE_HOST, 'api.dicebear.com'] : ['api.dicebear.com'],
   },
-  // เปิดให้ใช้ environment variables ฝั่ง client ได้ตามปกติ
   env: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   },

@@ -54,9 +54,9 @@ type ReviewComment = {
   id: number | string;
   created_at: string;
   author_name?: string | null;
-  author_role?: string | null;
-  text: string;
-  status_tag?: string | null;
+  author_role?: string | null; // 'STAFF' | 'ADMIN' | 'PROFESSOR' | ...
+  text: string | null;          // note
+  status_tag?: string | null;   // status value at that change
 };
 
 const STATUS_BADGE_STYLE: Record<string, string> = {
@@ -397,9 +397,20 @@ export default function EditPublicationPage() {
     setCommentsLoading(true);
     setCommentsError(null);
     try {
-      const res = await fetch(`/api/professor/publications/${id}/comments`, { cache: 'no-store' });
+      const res = await fetch(`/api/professor/publications/${id}/status-history`, { cache: 'no-store' });
       const json = await res.json();
-      const list: ReviewComment[] = Array.isArray(json?.data) ? json.data : [];
+      const rows: any[] = Array.isArray(json?.data) ? json.data : [];
+
+      const list: ReviewComment[] = rows.map((r) => ({
+        id: r.id ?? `${r.changed_at}-${r.status}`,
+        created_at: r.changed_at || r.created_at,
+        author_name:
+          `${r.user?.first_name ?? ''} ${r.user?.last_name ?? ''}`.trim() || r.user?.username || null,
+        author_role: (r.user?.role || '').toUpperCase(),
+        text: r.note ?? null,
+        status_tag: r.status ?? null,
+      }));
+
       setComments(list);
     } catch (e: any) {
       setComments([]);
@@ -416,11 +427,65 @@ export default function EditPublicationPage() {
     }
   }, [panelOpen]);
 
+  // ผูกปุ่มเปิด/ปิดเหมือนเดิม: แสดงเมื่อ needs_revision
   const canOpenComments = (status || '').toLowerCase() === 'needs_revision';
-  const statusOnlyComments = useMemo(
-    () => comments.filter(c => !!c.status_tag),
-    [comments]
-  );
+
+  // ======== pretty history: category names ========
+  const catMapById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const c of allCategories) m.set(c.category_id, c.category_name);
+    return m;
+  }, [allCategories]);
+
+  function parseCats(val: string | null): string[] {
+    if (!val) return [];
+    const raw = val.trim();
+
+    // JSON array
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return arr
+            .map((x) => {
+              if (typeof x === 'number') return catMapById.get(x) || String(x);
+              if (typeof x === 'string') {
+                const n = Number(x);
+                if (Number.isFinite(n)) return catMapById.get(n) || x;
+                return x;
+              }
+              return null;
+            })
+            .filter(Boolean) as string[];
+        }
+      } catch { /* ignore */ }
+    }
+
+    // CSV
+    const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const allNumeric = parts.every(p => Number.isFinite(Number(p)));
+    if (allNumeric) {
+      return parts.map(p => catMapById.get(Number(p)) || p);
+    }
+    return parts;
+  }
+
+  const prettyHistory = useMemo(() => {
+    if (!history || history.length === 0) return [];
+    return history.map(h => {
+      if (/categor(y|ies)|category_ids|categories/i.test(h.field_name)) {
+        const oldCats = parseCats(h.old_value);
+        const newCats = parseCats(h.new_value);
+        return {
+          ...h,
+          field_name: 'หมวดหมู่',
+          old_value: oldCats.length ? oldCats.join(', ') : '—',
+          new_value: newCats.length ? newCats.join(', ') : '—',
+        };
+      }
+      return h;
+    });
+  }, [history, catMapById]);
 
   if (loading) return <div className="p-6">กำลังโหลด...</div>;
   if (error) {
@@ -815,11 +880,11 @@ export default function EditPublicationPage() {
         {/* History */}
         <div className="bg-white rounded-xl shadow p-5">
           <div className="text-sm font-medium mb-3">ประวัติการแก้ไข (ทั้งหมด)</div>
-          {(!history || history.length === 0) ? (
+          {(!prettyHistory || prettyHistory.length === 0) ? (
             <div className="text-sm text-gray-500">—</div>
           ) : (
             <div className="space-y-2 text-sm">
-              {history.map((h, i) => (
+              {prettyHistory.map((h, i) => (
                 <div key={i} className="flex items-center justify-between border-b pb-2">
                   <div>
                     <div className="text-gray-800">
@@ -873,18 +938,19 @@ export default function EditPublicationPage() {
             <div className="text-sm text-gray-500">กำลังโหลดคอมเมนต์...</div>
           ) : commentsError ? (
             <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">{commentsError}</div>
-          ) : (comments.filter(c => !!c.status_tag)).length === 0 ? (
+          ) : comments.length === 0 ? (
             <div className="text-sm text-gray-500">ยังไม่มีคอมเมนต์</div>
           ) : (
-            (comments.filter(c => !!c.status_tag)).map((c) => {
+            comments.map((c) => {
+              // แสดง note เฉพาะที่เปลี่ยนโดย STAFF/ADMIN เท่านั้น
               const role = (c.author_role || '').toUpperCase();
-              const showText = !!(c.text && c.text.trim() && role === 'STAFF');
+              const showNote = (role === 'STAFF' || role === 'ADMIN') && !!(c.text && c.text.trim());
               return (
                 <div key={c.id} className="rounded-xl border bg-white shadow-sm p-3">
                   <div className="text-xs text-gray-500">
-                    {c.author_name || 'เจ้าหน้าที่'} {c.author_role ? `• ${c.author_role}` : ''}
+                    {c.author_name || 'ผู้ใช้'} {c.author_role ? `• ${c.author_role}` : ''}
                   </div>
-                  {showText ? <div className="mt-1 text-sm">{c.text}</div> : null}
+                  {showNote ? <div className="mt-1 text-sm">{c.text}</div> : null}
                   <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
                     <span>{new Date(c.created_at).toLocaleString()}</span>
                     {c.status_tag && (

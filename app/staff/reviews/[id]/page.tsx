@@ -19,8 +19,11 @@ type Detail = {
   authors: Array<{ order: number; name: string; role: string }>;
   history: Array<{ when: string; by: string; action: string }>;
   review_files_count: number;
-  abstract?: string | null;          // 👈 เพิ่มชนิด
+  abstract?: string | null; // 👈 เพิ่มชนิด
 };
+
+// 👇 เพิ่มชนิด/สเตตสำหรับแสดงไฟล์ (อ่านอย่างเดียว)
+type ReviewFile = { id?: string; name?: string; url: string; uploaded_at?: string };
 
 export default function StaffReviewDetailPage({
   params,
@@ -36,6 +39,10 @@ export default function StaffReviewDetailPage({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [saving, setSaving] = useState<"draft" | "approve" | "request" | null>(null);
 
+  // 👇 state สำหรับไฟล์แนบ (อาจารย์อัปโหลด)
+  const [files, setFiles] = useState<ReviewFile[]>([]);
+  const [filesErr, setFilesErr] = useState<string | null>(null);
+
   async function load() {
     if (!Number.isFinite(id)) return;
     setLoading(true);
@@ -44,6 +51,23 @@ export default function StaffReviewDetailPage({
       const j = await res.json();
       if (!res.ok) throw new Error(j?.message || "load failed");
       setD(j.data as Detail);
+
+      // 👇 โหลดรายการไฟล์แนบ (อ่านอย่างเดียว)
+      try {
+        const rFiles = await fetch(`/api/staff/reviews/${id}/files`, { cache: "no-store" });
+        const txt = await rFiles.text();
+        const jf = txt ? JSON.parse(txt) : null;
+        if (rFiles.ok && Array.isArray(jf?.data)) {
+          setFiles(jf.data as ReviewFile[]);
+          setFilesErr(null);
+        } else {
+          setFiles([]);
+          setFilesErr(jf?.message ?? "โหลดไฟล์ไม่สำเร็จ");
+        }
+      } catch {
+        setFiles([]);
+        setFilesErr("โหลดไฟล์ไม่สำเร็จ");
+      }
     } finally {
       setLoading(false);
     }
@@ -53,6 +77,7 @@ export default function StaffReviewDetailPage({
     load();
   }, [id]);
 
+  // ❗ คงฟังก์ชันเดิมไว้ (ไม่ใช้งานแล้ว) เพื่อไม่กระทบส่วนอื่น
   async function uploadFiles() {
     const f = fileRef.current?.files?.[0];
     if (!f) return;
@@ -172,12 +197,42 @@ export default function StaffReviewDetailPage({
                   className="mt-2 w-full rounded-xl border px-3 py-2 min-h-[120px]"
                 />
 
+                {/* 🔁 แก้เฉพาะบล็อกแนบไฟล์: แสดงไฟล์ 'ดูอย่างเดียว' */}
                 <div className="mt-4">
                   <div className="text-sm text-gray-700 mb-2">ไฟล์แนบ/สิ่งที่เกี่ยวข้อง</div>
-                  <div className="flex items-center gap-3">
-                    <input ref={fileRef} type="file" accept="application/pdf" onChange={uploadFiles} />
-                    <div className="text-sm text-gray-600">ไฟล์ PDF แนบ ({d.review_files_count})</div>
-                  </div>
+
+                  {filesErr ? (
+                    <div className="text-xs text-rose-600">{filesErr}</div>
+                  ) : files.length === 0 ? (
+                    <div className="text-sm text-gray-500">ยังไม่มีไฟล์ที่อาจารย์แนบ</div>
+                  ) : (
+                    <ul className="divide-y rounded-xl border bg-gray-50">
+                      {files.map((f, i) => (
+                        <li key={f.id ?? i} className="flex items-center justify-between px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] px-2 py-0.5 rounded-full border bg-white">PDF</span>
+                            <span className="text-sm">{f.name ?? `ไฟล์ที่ ${i + 1}`}</span>
+                            {f.uploaded_at && (
+                              <span className="text-xs text-gray-500">
+                                • {new Date(f.uploaded_at).toLocaleString("th-TH")}
+                              </span>
+                            )}
+                          </div>
+                          <a
+                            href={f.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 underline"
+                          >
+                            เปิดดู
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* แสดงตัวเลขรวมตามข้อมูลเดิม (ไม่เปลี่ยนพฤติกรรมเดิม) */}
+                  <div className="text-sm text-gray-600 mt-2">ไฟล์ PDF แนบ ({d.review_files_count})</div>
                 </div>
 
                 <div className="mt-5 grid md:grid-cols-3 gap-3">

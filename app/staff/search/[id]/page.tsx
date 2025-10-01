@@ -1,8 +1,9 @@
+// app/staff/search/[id]/page.tsx
 'use client';
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 
 /* ================= Types ================= */
 type Author = {
@@ -84,6 +85,35 @@ export default function PublicationDetailPage() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  // ==== เพิ่มสำหรับปุ่มลบ ====
+  const router = useRouter();
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!id || deleting) return;
+    const ok = typeof window !== 'undefined' ? window.confirm('ยืนยันลบงานตีพิมพ์นี้?') : false;
+    if (!ok) return;
+
+    try {
+      setDeleting(true);
+      const base = (process.env.NEXT_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+      const url = `${base}/api/staff/search/${encodeURIComponent(String(id))}`;
+      const res = await fetch(url, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({} as any));
+
+      if (!res.ok || (json as any)?.ok === false) {
+        throw new Error((json as any)?.message || `ลบไม่สำเร็จ (${res.status})`);
+      }
+
+      router.push('/staff/search?deleted=1');
+    } catch (e: any) {
+      alert(e?.message || 'ลบไม่สำเร็จ');
+    } finally {
+      setDeleting(false);
+    }
+  }
+  // ===========================
 
   useEffect(() => {
     let isMounted = true;
@@ -305,6 +335,18 @@ export default function PublicationDetailPage() {
           </Link>
         </div>
       </main>
+
+      {/* ===== Delete Floating Button (bottom-left) ===== */}
+   <button
+  onClick={handleDelete}
+  disabled={deleting}
+  className="fixed bottom-6 right-6 z-50 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium
+             bg-red-600 text-white shadow-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+  aria-disabled={deleting}
+  title="ลบงานตีพิมพ์นี้"
+>
+  {deleting ? 'กำลังลบ…' : 'ลบงานตีพิมพ์นี้'}
+</button>
     </div>
   );
 }
