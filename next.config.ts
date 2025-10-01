@@ -4,9 +4,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
   eslint: {
-    ignoreDuringBuilds: true,  // ← ข้าม ESLint ตอน build (โปรดักชัน)
+    ignoreDuringBuilds: true,  // ข้าม ESLint ตอนโปรดักชันบิลด์
   },
-  // ถ้ามี type error จริง ๆ ไม่อยากให้ตก build ก็เพิ่มบรรทัดด้านล่าง (ชั่วคราว)
+  // ถ้าอยากให้ไม่ตกเพราะ TypeScript error ด้วย (ชั่วคราว) ให้ uncomment บรรทัดนี้:
   // typescript: { ignoreBuildErrors: true },
 };
 
