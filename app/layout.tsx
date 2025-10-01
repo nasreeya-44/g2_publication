@@ -1,7 +1,7 @@
 // app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
+//import "./globals.css";
 
 // โหลดฟอนต์จาก Google Fonts (Next.js auto optimize)
 const geistSans = Geist({
